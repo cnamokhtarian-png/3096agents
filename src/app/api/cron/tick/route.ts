@@ -12,6 +12,7 @@ import {
 } from "@/lib/jobs";
 import { recordAgentError } from "@/lib/agent-execution";
 import { currentUser } from "@/lib/auth";
+import { generateCooExecutiveReport, runFleetCycle } from "@/lib/coo";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -67,6 +68,7 @@ async function run(req: NextRequest, jobParam: string) {
 
   const job = [
     "full",
+    "fleet",
     "market",
     "queue",
     "approvals",
@@ -98,6 +100,21 @@ async function run(req: NextRequest, jobParam: string) {
       if (!r.ok) status = "partial";
     }
 
+    if (job === "fleet" || job === "full") {
+      const fleet = await runFleetCycle({
+        charterFirst: false,
+        forceAriaCard: false,
+        maxSpecialistProposals: 1,
+      });
+      steps.fleet = {
+        ok: fleet.ok,
+        durationMs: fleet.durationMs,
+        ariaSetups: fleet.aria.setups?.length ?? 0,
+        bountyFeeds: "feedsChecked" in fleet.bounty ? fleet.bounty.feedsChecked : 0,
+        specialistProposals: fleet.specialists.proposalsDispatched,
+      };
+    }
+
     if (job === "queue" || job === "full") {
       const results = await runQueuedJobs(5);
       steps.queue = { executed: results.length, results };
@@ -113,8 +130,16 @@ async function run(req: NextRequest, jobParam: string) {
     }
 
     if (job === "reports") {
-      const reports = await sendDailyReports();
+      const [reports, coo] = await Promise.all([
+        sendDailyReports(),
+        generateCooExecutiveReport({ sendTelegram: true }),
+      ]);
       steps.reports = reports;
+      steps.cooReport = {
+        ok: coo.ok,
+        telegramSent: Boolean(coo.telegram?.ok),
+        confirmedIncomeUsdt: coo.summary.company.confirmedIncomeUsdt,
+      };
       if (reports.errors.length) status = "partial";
     }
 

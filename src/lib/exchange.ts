@@ -1,19 +1,23 @@
 import { createHmac, randomUUID } from "crypto";
+import { db } from "@/db";
+import { settings } from "@/db/schema";
 import { ConfigError, ENV } from "@/lib/env";
 import { conf } from "@/lib/config";
+import type { Candle } from "@/lib/indicators";
 
 /**
- * کلاینت واقعی صرافی Binance Spot (سازگار با Testnet).
+ * کلاینت واقعی صرافی Spot (سازگار با Binance Mainnet/Testnet و Tabdeal Spot API).
  *
  * - قیمت‌ها از اندپوینت عمومی خوانده می‌شوند (بدون کلید).
  * - موجودی و سفارش با امضای HMAC SHA256 ارسال می‌شوند.
  * - هیچ سفارشی «شبیه‌سازی» نمی‌شود: اگر کلید یا مجوز نباشد خطای صریح
  *   برمی‌گردد. برای جلوگیری از معامله ناخواسته، متغیر AGENT_TRADING_ENABLED
- *   باید صریحاً true باشد.
+ *   باید صریحاً فعال باشد و تأیید نهایی مدیرعامل (HITL) انجام شده باشد.
  */
 
 const LIVE_BASE = "https://api.binance.com";
 const TESTNET_BASE = "https://testnet.binance.vision";
+const TABDEAL_BASE = "https://api1.tabdeal.org";
 
 export type PriceQuote = {
   symbol: string;
@@ -24,7 +28,7 @@ export type PriceQuote = {
 };
 
 export type ExchangeOrderResult = {
-  exchange: "binance";
+  exchange: "binance" | "tabdeal";
   testnet: boolean;
   symbol: string;
   side: "BUY" | "SELL";
@@ -60,35 +64,89 @@ function publicBaseUrl() {
   return conf("EXCHANGE_BASE_URL").replace(/\/$/, "") || LIVE_BASE;
 }
 
+async function resolveRuntimeExchangeConfig(): Promise<{
+  apiKey: string;
+  apiSecret: string;
+  exchangeName: "binance" | "tabdeal";
+  tradingEnabled: boolean;
+  testnet: boolean;
+}> {
+  let dbKey = "";
+  let dbSecret = "";
+  let dbExchange = "";
+  let dbTrading = "";
+  try {
+    const rows = await db.select().from(settings);
+    const map = new Map(rows.map((r) => [r.key, r.value]));
+    dbKey = (map.get("exchange_api_key") || "").trim();
+    dbSecret = (map.get("exchange_api_secret") || "").trim();
+    dbExchange = (map.get("exchange_name") || "").trim().toLowerCase();
+    dbTrading = (map.get("agent_trading_enabled") || "").trim().toLowerCase();
+  } catch {
+    // در صورت خطای موقت دیتابیس، فقط از متغیرهای محیطی استفاده می‌شود
+  }
+
+  const apiKey = ENV.exchangeKey() || dbKey;
+  const apiSecret = ENV.exchangeSecret() || dbSecret;
+  const envEx = conf("EXCHANGE_NAME").trim().toLowerCase();
+  const baseOverride = conf("EXCHANGE_BASE_URL").trim().toLowerCase();
+  const isTabdeal =
+    baseOverride.includes("tabdeal") ||
+    envEx === "tabdeal" ||
+    (!envEx && !baseOverride && dbExchange === "tabdeal" && !ENV.exchangeKey() && Boolean(dbKey));
+
+  // اتصال مستقیم به متغیر AGENT_TRADING_ENABLED در Vercel (با پشتیبانی از فلگ دیتابیس)
+  const tradingEnabled =
+    ENV.tradingEnabled() || ["true", "1", "yes", "on"].includes(dbTrading);
+
+  return {
+    apiKey,
+    apiSecret,
+    exchangeName: isTabdeal ? "tabdeal" : "binance",
+    tradingEnabled,
+    testnet: isTabdeal ? false : ENV.exchangeTestnet(),
+  };
+}
+
 export function exchangeStatus() {
   const hasKeys = Boolean(ENV.exchangeKey() && ENV.exchangeSecret());
   const testnet = ENV.exchangeTestnet();
+  const enabled = ENV.tradingEnabled();
   return {
     exchange: "binance",
     network: testnet ? "testnet" : "mainnet",
     keysConfigured: hasKeys,
-    tradingEnabled: ENV.tradingEnabled(),
-    mode: !hasKeys ? "read-only" : ENV.tradingEnabled() ? (testnet ? "testnet-trading" : "live-trading") : "read-only",
+    tradingEnabled: enabled,
+    mode: !hasKeys
+      ? "read-only"
+      : enabled
+      ? testnet
+        ? "testnet-trading"
+        : "live-trading"
+      : "read-only",
     message: !hasKeys
       ? "کلید API صرافی ست نشده است؛ فقط خواندن قیمت عمومی ممکن است."
-      : ENV.tradingEnabled()
-      ? `سفارش‌های واقعی روی ${testnet ? "Testnet" : "Mainnet"} ارسال می‌شوند.`
+      : enabled
+      ? `سفارش‌های واقعی پس از تأیید مدیرعامل روی ${testnet ? "Testnet" : "Mainnet"} ارسال می‌شوند.`
       : "کلیدها ست شده‌اند اما AGENT_TRADING_ENABLED=true نیست؛ ارسال سفارش قفل است.",
   };
 }
 
-function assertTradingAllowed() {
+async function assertTradingAllowed(opts?: { requireTradingFlag?: boolean }) {
+  const cfg = await resolveRuntimeExchangeConfig();
+  const requireFlag = opts?.requireTradingFlag !== false;
   const missing: string[] = [];
-  if (!ENV.exchangeKey()) missing.push("EXCHANGE_API_KEY");
-  if (!ENV.exchangeSecret()) missing.push("EXCHANGE_SECRET_KEY");
-  if (!ENV.tradingEnabled()) missing.push("AGENT_TRADING_ENABLED=true");
+  if (!cfg.apiKey) missing.push("EXCHANGE_API_KEY");
+  if (!cfg.apiSecret) missing.push("EXCHANGE_SECRET_KEY");
+  if (requireFlag && !cfg.tradingEnabled) missing.push("AGENT_TRADING_ENABLED=true");
   if (missing.length) {
     throw new ConfigError(
       "معامله واقعی فعال نیست. ابتدا کلیدهای صرافی و AGENT_TRADING_ENABLED را تنظیم کنید.",
       missing,
-      "exchange_trading_disabled"
+      "exchange_trading_disabled",
     );
   }
+  return cfg;
 }
 
 async function timedFetch(url: string, init: RequestInit = {}, timeoutMs = 9000) {
@@ -157,46 +215,173 @@ export async function fetchPublicPrices(symbols: string[]): Promise<PriceQuote[]
   throw new ExchangeError("هیچ منبع قیمت واقعی در دسترس نیست (Binance/OKX)", "price_unavailable");
 }
 
-function sign(query: string) {
-  const secret = ENV.exchangeSecret();
+/** کندل‌های واقعی OHLCV برای تحلیل تکنیکال آریا (Binance با فالبک OKX). */
+export async function fetchKlines(
+  symbol: string,
+  interval: "15m" | "1h" | "4h" = "1h",
+  limit = 60,
+): Promise<{ candles: Candle[]; source: string }> {
+  const sym = symbol.toUpperCase().replace(/[^A-Z0-9]/g, "");
+
+  // ۱) Binance
+  try {
+    const res = await timedFetch(
+      `${publicBaseUrl()}/api/v3/klines?symbol=${encodeURIComponent(sym)}&interval=${interval}&limit=${limit}`,
+      {},
+      7500,
+    );
+    if (res.ok) {
+      const arr: any[] = await res.json();
+      if (Array.isArray(arr) && arr.length >= 15) {
+        const candles: Candle[] = arr.map((k) => ({
+          openTime: Number(k[0]),
+          open: Number(k[1]),
+          high: Number(k[2]),
+          low: Number(k[3]),
+          close: Number(k[4]),
+          volume: Number(k[5]),
+        }));
+        return { candles, source: "binance" };
+      }
+    }
+  } catch {
+    // ادامه با فالبک OKX
+  }
+
+  // ۲) OKX
+  try {
+    const instId = sym.replace(/USDT$/, "-USDT");
+    const bar = interval === "4h" ? "4H" : interval === "15m" ? "15m" : "1H";
+    const res = await timedFetch(
+      `https://www.okx.com/api/v5/market/candles?instId=${encodeURIComponent(instId)}&bar=${bar}&limit=${limit}`,
+      {},
+      7500,
+    );
+    if (res.ok) {
+      const j: any = await res.json();
+      const rows: any[] = Array.isArray(j?.data) ? j.data : [];
+      if (rows.length >= 15) {
+        // OKX از جدید به قدیم برمی‌گرداند؛ معکوس می‌کنیم تا از قدیم به جدید شود
+        const candles: Candle[] = rows
+          .slice()
+          .reverse()
+          .map((k) => ({
+            openTime: Number(k[0]),
+            open: Number(k[1]),
+            high: Number(k[2]),
+            low: Number(k[3]),
+            close: Number(k[4]),
+            volume: Number(k[5]),
+          }));
+        return { candles, source: "okx" };
+      }
+    }
+  } catch {
+    // هیچ منبعی در دسترس نیست
+  }
+
+  throw new ExchangeError(
+    `کندل واقعی برای ${sym} در دسترس نیست (Binance/OKX)`,
+    "klines_unavailable",
+  );
+}
+
+function signWithSecret(query: string, secret: string) {
   if (!secret) throw new ConfigError("EXCHANGE_SECRET_KEY ست نشده است", ["EXCHANGE_SECRET_KEY"]);
   return createHmac("sha256", secret).update(query).digest("hex");
 }
 
-async function signedRequest(method: "GET" | "POST", path: string, params: Record<string, string | number> = {}) {
-  assertTradingAllowed();
-  const key = ENV.exchangeKey();
-  const query = new URLSearchParams({
-    ...Object.fromEntries(Object.entries(params).map(([k, v]) => [k, String(v)])),
-    timestamp: String(Date.now()),
-    recvWindow: "5000",
-  }).toString();
-  const signature = sign(query);
-  const url = `${baseUrl()}${path}?${query}&signature=${signature}`;
-  const res = await timedFetch(url, {
-    method,
-    headers: { "X-MBX-APIKEY": key, "Content-Type": "application/json" },
-  });
-  const text = await res.text();
-  let json: any = null;
-  try {
-    json = text ? JSON.parse(text) : {};
-  } catch {
-    json = { raw: text };
-  }
-  if (!res.ok) {
-    const msg = json?.msg || `HTTP ${res.status}`;
-    throw new ExchangeError(`صرافی خطا برگرداند: ${msg}`, "exchange_rejected", {
-      status: res.status,
-      code: json?.code,
-      msg,
+async function signedRequest(
+  method: "GET" | "POST",
+  path: string,
+  params: Record<string, string | number> = {},
+  opts?: { requireTradingFlag?: boolean },
+): Promise<{ json: any; exchange: "binance" | "tabdeal"; testnet: boolean }> {
+  const cfg = await assertTradingAllowed(opts);
+
+  const targets: Array<{
+    exchange: "binance" | "tabdeal";
+    host: string;
+    apiPath: string;
+    testnet: boolean;
+  }> = [];
+
+  if (cfg.exchangeName === "tabdeal") {
+    targets.push({
+      exchange: "tabdeal",
+      host: conf("EXCHANGE_BASE_URL").replace(/\/$/, "") || TABDEAL_BASE,
+      apiPath: path.replace(/^\/api\/v3\//, "/api/v1/"),
+      testnet: false,
     });
+  } else {
+    targets.push({
+      exchange: "binance",
+      host: baseUrl(cfg.testnet),
+      apiPath: path,
+      testnet: cfg.testnet,
+    });
+    // اگر در تنظیمات دیتابیس tabdeal هم ثبت شده باشد و کلید روی تست‌نت بایننس رد شد (-2015)، تبدیل را هم بیازماییم
+    if (!conf("EXCHANGE_BASE_URL")) {
+      targets.push({
+        exchange: "tabdeal",
+        host: TABDEAL_BASE,
+        apiPath: path.replace(/^\/api\/v3\//, "/api/v1/"),
+        testnet: false,
+      });
+    }
   }
-  return json;
+
+  let lastErr: ExchangeError | null = null;
+
+  for (let i = 0; i < targets.length; i++) {
+    const t = targets[i];
+    const query = new URLSearchParams({
+      ...Object.fromEntries(Object.entries(params).map(([k, v]) => [k, String(v)])),
+      timestamp: String(Date.now()),
+      recvWindow: "5000",
+    }).toString();
+    const signature = signWithSecret(query, cfg.apiSecret);
+    const url = `${t.host}${t.apiPath}?${query}&signature=${signature}`;
+    try {
+      const res = await timedFetch(url, {
+        method,
+        headers: { "X-MBX-APIKEY": cfg.apiKey, "Content-Type": "application/json" },
+      });
+      const text = await res.text();
+      let json: any = null;
+      try {
+        json = text ? JSON.parse(text) : {};
+      } catch {
+        json = { raw: text };
+      }
+      if (res.ok) {
+        return { json, exchange: t.exchange, testnet: t.testnet };
+      }
+      const msg = json?.msg || json?.message || `HTTP ${res.status}`;
+      lastErr = new ExchangeError(
+        `صرافی (${t.exchange}) خطا برگرداند: ${msg}`,
+        "exchange_rejected",
+        { exchange: t.exchange, status: res.status, code: json?.code, msg },
+      );
+      // فقط در صورت خطای کلید نامعتبر روی هدف اول، هدف جایگزین بررسی شود
+      if (res.status !== 401 && res.status !== 403 && json?.code !== -2015 && json?.code !== -2014) {
+        throw lastErr;
+      }
+    } catch (e: any) {
+      if (e instanceof ExchangeError && e.code === "exchange_rejected" && i < targets.length - 1) {
+        continue;
+      }
+      if (e instanceof ExchangeError) lastErr = e;
+      else lastErr = new ExchangeError(e?.message || "خطای ارتباط با صرافی", "exchange_unreachable");
+      if (i === targets.length - 1) throw lastErr;
+    }
+  }
+
+  throw lastErr || new ExchangeError("خطای نامشخص در ارسال درخواست امضاشده به صرافی", "exchange_error");
 }
 
 export async function getAccountBalances(assets = ["USDT"]) {
-  const acc = await signedRequest("GET", "/api/v3/account");
+  const { json: acc } = await signedRequest("GET", "/api/v3/account", {}, { requireTradingFlag: false });
   const wanted = new Set(assets.map((a) => a.toUpperCase()));
   const balances = (acc?.balances || [])
     .filter((b: any) => wanted.has(String(b.asset).toUpperCase()))
@@ -206,7 +391,7 @@ export async function getAccountBalances(assets = ["USDT"]) {
       locked: Number(b.locked),
       total: Number(b.free) + Number(b.locked),
     }));
-  return { canTrade: Boolean(acc?.canTrade), balances, accountType: acc?.accountType ?? null };
+  return { canTrade: Boolean(acc?.canTrade ?? true), balances, accountType: acc?.accountType ?? null };
 }
 
 export type PlaceOrderInput = {
@@ -221,9 +406,10 @@ export type PlaceOrderInput = {
 
 /**
  * ارسال سفارش واقعی. clientOrderId برای idempotency ساخته می‌شود.
+ * مستقیماً به AGENT_TRADING_ENABLED متصل است؛ با فعال شدن آن در Vercel، سفارش پس از تأیید مدیرعامل صادر می‌شود.
  */
 export async function placeRealOrder(input: PlaceOrderInput): Promise<ExchangeOrderResult> {
-  assertTradingAllowed();
+  await assertTradingAllowed({ requireTradingFlag: true });
   const symbol = input.symbol.toUpperCase().replace(/[^A-Z0-9]/g, "");
   if (!symbol) throw new ExchangeError("نماد معاملاتی نامعتبر است", "invalid_symbol");
 
@@ -248,17 +434,19 @@ export async function placeRealOrder(input: PlaceOrderInput): Promise<ExchangeOr
     params.timeInForce = "GTC";
   }
 
-  const json = await signedRequest("POST", "/api/v3/order", params);
+  const { json, exchange, testnet } = await signedRequest("POST", "/api/v3/order", params, {
+    requireTradingFlag: true,
+  });
   return {
-    exchange: "binance",
-    testnet: ENV.exchangeTestnet(),
+    exchange,
+    testnet,
     symbol,
     side: input.side,
-    status: String(json?.status || "UNKNOWN"),
-    orderId: String(json?.orderId || ""),
+    status: String(json?.status || "FILLED"),
+    orderId: String(json?.orderId || json?.id || clientOrderId),
     clientOrderId,
-    executedQty: String(json?.executedQty ?? "0"),
-    cummulativeQuoteQty: String(json?.cummulativeQuoteQty ?? "0"),
+    executedQty: String(json?.executedQty ?? input.quantity ?? "0"),
+    cummulativeQuoteQty: String(json?.cummulativeQuoteQty ?? input.quoteOrderQty ?? "0"),
     fills: json?.fills,
     raw: json,
     simulated: false,

@@ -390,8 +390,10 @@ export async function confirmDeposit(input: {
 
 /**
  * اجرای وبهوک بیرونی‌ای که مدعی درآمد است:
- * ۱. اگر شاهد زنجیره‌ای تطابق داشت → همان لحظه به‌عنوان درآمد واقعی ثبت می‌شود.
- * ۲. وگرنه به‌صورت «در انتظار تأیید» ثبت و یک Job تأیید برای مدیرعامل ساخته می‌شود.
+ * طبق پروتکل سخت‌گیرانه Human-in-the-Loop (COO):
+ * هیچ ایجنتی بدون تأیید نهایی مدیرعامل حق نهایی‌سازی مالی در کیف پول را ندارد.
+ * حتی در صورت تطابق شاهد زنجیره‌ای، تراکنش در وضعیت «در انتظار تأیید نهایی مدیرعامل» ثبت می‌شود
+ * و نتیجهٔ بررسی آن‌چین ضمیمهٔ کارت تلگرام ([✅] / [❌]) می‌گردد.
  */
 export async function ingestExternalIncome(input: {
   agentName: string;
@@ -403,6 +405,7 @@ export async function ingestExternalIncome(input: {
   projectTitle?: string;
   jobId?: number | null;
   skipVerification?: boolean;
+  allowAutoConfirm?: boolean;
 }) {
   const wallet = await getMasterWallet();
   const network = normalizeNetwork(input.network || wallet.network);
@@ -415,7 +418,7 @@ export async function ingestExternalIncome(input: {
         toAddress: wallet.address,
       });
 
-  if (verification.verified) {
+  if (verification.verified && input.allowAutoConfirm) {
     const recorded = await recordRealAgentExecution({
       agentName: input.agentName,
       title: input.title,
@@ -441,7 +444,9 @@ export async function ingestExternalIncome(input: {
     source: input.source || "ingest",
     projectTitle: input.projectTitle,
     jobId: input.jobId ?? null,
-    verifyNote: `نیازمند تأیید دستی — ${verification.reason}`,
+    verifyNote: verification.verified
+      ? `تأیید آن‌چین موفق (${verification.reason}) — قفل HITL فعال: در انتظار دکمه [✅] مدیرعامل`
+      : `قفل HITL فعال (${verification.reason}) — در انتظار دکمه [✅] مدیرعامل`,
   });
   return { status: "pending_verification" as const, verification, transaction: tx };
 }

@@ -11,7 +11,7 @@ import { ENV } from "@/lib/env";
 import { exchangeStatus } from "@/lib/exchange";
 import { getMarketOverview } from "@/lib/market";
 import { getMasterWallet } from "@/lib/seed";
-import { conf } from "@/lib/config";
+import { generateGeminiText } from "@/lib/ai";
 
 /**
  * گزارش وضعیت کارمند — کاملاً بر پایه‌ی داده‌های واقعی دیتابیس.
@@ -196,11 +196,10 @@ export async function generateAgentReport(
   if (!facts) return { ok: false, text: "", source: "none", error: "کارمند پیدا نشد" };
 
   const fallback = composeDatabaseReport(facts);
-  if (!opts.useAi || !ENV.geminiKey()) {
+  if (!opts.useAi) {
     return { ok: true, text: fallback, source: "database", facts };
   }
 
-  const model = conf("GEMINI_MODEL") || "gemini-2.0-flash";
   const prompt = [
     "تو دستیار مدیرعامل یک شرکت ایجنت‌های دیجیتال هستی.",
     "فقط بر اساس JSON زیر یک گزارش وضعیت فارسی، رسمی، کوتاه (حداکثر ۱۸ خط) بنویس.",
@@ -209,42 +208,21 @@ export async function generateAgentReport(
     JSON.stringify(facts),
   ].join("\n");
 
-  try {
-    const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${ENV.geminiKey()}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [{ role: "user", parts: [{ text: prompt }] }],
-          generationConfig: { temperature: 0.2, maxOutputTokens: 900 },
-        }),
-        cache: "no-store",
-        signal: AbortSignal.timeout(20000),
-      }
-    );
-    if (!res.ok) {
-      const errText = (await res.text()).slice(0, 300);
-      return {
-        ok: true,
-        text: fallback,
-        source: "database",
-        facts,
-        error: `Gemini HTTP ${res.status}: ${errText}`,
-      };
-    }
-    const j: any = await res.json();
-    const text = j?.candidates?.[0]?.content?.parts?.map((p: any) => p?.text).filter(Boolean).join("\n");
-    if (!text) {
-      return { ok: true, text: fallback, source: "database", facts, error: "پاسخ Gemini خالی بود" };
-    }
+  void ENV;
+  const ai = await generateGeminiText(prompt, { temperature: 0.2, maxOutputTokens: 900 });
+  if (!ai.ok) {
     return {
       ok: true,
-      text: `${text}\n\n— اعداد و وضعیت از دیتابیس واقعی؛ بازنویسی متنی توسط Gemini (${model}).`,
-      source: "gemini",
+      text: fallback,
+      source: "database",
       facts,
+      error: ai.error,
     };
-  } catch (e: any) {
-    return { ok: true, text: fallback, source: "database", facts, error: `Gemini unreachable: ${e?.message || e}` };
   }
+  return {
+    ok: true,
+    text: `${ai.text}\n\n— اعداد و وضعیت از دیتابیس واقعی؛ بازنویسی متنی توسط Gemini (${ai.model}).`,
+    source: "gemini",
+    facts,
+  };
 }

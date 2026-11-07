@@ -5,7 +5,9 @@ import {
   agentJobs,
   agentLogs,
   exchangeOrders,
+  projects,
   systemEvents,
+  tasks,
   toolRuns,
 } from "@/db/schema";
 import { and, asc, desc, eq, inArray, lt, sql } from "drizzle-orm";
@@ -29,7 +31,15 @@ import { conf } from "@/lib/config";
  * هیچ کاری «شبیه‌سازی» نمی‌شود؛ خطاها عیناً ثبت می‌شوند.
  */
 
-export type JobKind = "trade" | "confirm_deposit" | "tool_run" | "status_report" | "withdraw" | "custom";
+export type JobKind =
+  | "trade"
+  | "confirm_deposit"
+  | "tool_run"
+  | "status_report"
+  | "withdraw"
+  | "proposal"
+  | "bounty"
+  | "custom";
 
 export type JobRecord = typeof agentJobs.$inferSelect;
 
@@ -131,6 +141,7 @@ export async function createJob(input: CreateJobInput) {
         detail: job.detail,
         risk: job.risk,
         kind: job.kind,
+        payload: (job.payload || {}) as Record<string, unknown>,
       });
       if (res.ok) {
         const messageId = (res as any).result?.message_id;
@@ -269,7 +280,7 @@ async function executeTrade(job: JobRecord, _actor: string): Promise<ExecutionRe
     });
 
     await db.insert(exchangeOrders).values({
-      exchange: "binance",
+      exchange: order.exchange,
       testnet: order.testnet,
       symbol: order.symbol,
       side: order.side,
@@ -508,6 +519,63 @@ async function executeWithdraw(job: JobRecord): Promise<ExecutionResult> {
   return { ok: true, result: { txHash, amount } };
 }
 
+async function executeProposalOrBounty(
+  job: JobRecord,
+  actor: string,
+): Promise<ExecutionResult> {
+  const p = (job.payload || {}) as Record<string, any>;
+  if (p.projectId) {
+    await db
+      .update(projects)
+      .set({ status: "approved" })
+      .where(eq(projects.id, Number(p.projectId)))
+      .catch(() => {});
+  }
+  if (p.taskId) {
+    await db
+      .update(tasks)
+      .set({ status: "approved" })
+      .where(eq(tasks.id, Number(p.taskId)))
+      .catch(() => {});
+  }
+  if (job.agentId) {
+    await db
+      .update(agents)
+      .set({
+        successCount: sql`${agents.successCount} + 1`,
+        tasksCompleted: sql`${agents.tasksCompleted} + 1`,
+        lastActiveAt: new Date(),
+      })
+      .where(eq(agents.id, job.agentId))
+      .catch(() => {});
+  }
+
+  await logActivity({
+    agentId: job.agentId,
+    agentName: job.agentName,
+    action:
+      job.kind === "bounty"
+        ? `کمپین بانتی با تأیید مدیرعامل فعال شد`
+        : `پیشنهاد فرصت با تأیید مدیرعامل وارد فاز اجرا شد`,
+    status: "success",
+    detail: `${job.title} • تأییدکننده: ${actor} • سود تخمینی: ${p.estimatedProfitUsdt ?? 0} USDT (ثبت در کیف پول فقط پس از واریز واقعی و هش تراکنش)`,
+    jobId: job.id,
+    source: "hitl",
+    meta: { actor, kind: job.kind, link: p.link || null },
+  });
+
+  return {
+    ok: true,
+    result: {
+      approvedBy: actor,
+      estimatedProfitUsdt: Number(p.estimatedProfitUsdt || 0),
+      estimatedDuration: p.estimatedDuration || null,
+      link: p.link || null,
+      note: "پیشنهاد تأیید و آغاز شد. درآمد واقعی پس از دریافت هش تراکنش در کیف پول واحد ثبت می‌گردد.",
+    },
+  };
+}
+
 async function executeJob(job: JobRecord, actor: string): Promise<ExecutionResult> {
   const started = Date.now();
   const [running] = await db
@@ -515,6 +583,7 @@ async function executeJob(job: JobRecord, actor: string): Promise<ExecutionResul
     .set({ status: "running", startedAt: new Date(), attempts: sql`${agentJobs.attempts} + 1` })
     .where(eq(agentJobs.id, job.id))
     .returning();
+  void running;
 
   let result: ExecutionResult;
   try {
@@ -533,6 +602,10 @@ async function executeJob(job: JobRecord, actor: string): Promise<ExecutionResul
         break;
       case "withdraw":
         result = await executeWithdraw(job);
+        break;
+      case "proposal":
+      case "bounty":
+        result = await executeProposalOrBounty(job, actor);
         break;
       default:
         result = await markFailed(job, `نوع کار «${job.kind}» اجراکننده ندارد`, "unsupported_kind");
@@ -641,6 +714,7 @@ export async function remindPendingApprovals(olderThanMinutes = 30) {
       detail: job.detail,
       risk: job.risk,
       kind: job.kind,
+      payload: (job.payload || {}) as Record<string, unknown>,
     });
     if (res.ok) sent++;
   }

@@ -7,6 +7,7 @@ import {
   telegramConfigured,
 } from "@/lib/telegram";
 import { sendDailyReports } from "@/lib/jobs";
+import { executeCooStartupDirective, generateCooExecutiveReport } from "@/lib/coo";
 import { db } from "@/db";
 import { agentActivityLogs, messages } from "@/db/schema";
 import { safeRoute } from "@/lib/api-response";
@@ -41,6 +42,16 @@ export async function POST(req: NextRequest) {
       if (action === "daily_reports") {
         const result = await sendDailyReports();
         return NextResponse.json({ ok: true, ...result });
+      }
+
+      if (action === "coo_report") {
+        const result = await generateCooExecutiveReport({ sendTelegram: true });
+        return NextResponse.json(result);
+      }
+
+      if (action === "coo_startup") {
+        const result = await executeCooStartupDirective({ sendTelegramReport: true });
+        return NextResponse.json(result);
       }
 
       const text = String(b?.text || "").trim();

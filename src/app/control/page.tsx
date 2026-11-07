@@ -59,6 +59,8 @@ export default function Control() {
   const [agentsList, setAgentsList] = useState<any[]>([]);
   const [walletInfo, setWalletInfo] = useState<any>(null);
   const [stats, setStats] = useState<any>(null);
+  const [cooData, setCooData] = useState<any>(null);
+  const [logFilter, setLogFilter] = useState<"all" | "success" | "pending" | "error">("all");
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState("");
   const [busy, setBusy] = useState("");
@@ -121,7 +123,7 @@ export default function Control() {
   };
 
   async function load() {
-    const [p, t, m, tx, l, tl, ag, wl, s, act, jb] = await Promise.all([
+    const [p, t, m, tx, l, tl, ag, wl, s, act, jb, coo] = await Promise.all([
       fetch("/api/projects").then((r) => r.json()).catch(() => []),
       fetch("/api/rest?type=tasks").then((r) => r.json()).catch(() => []),
       fetch("/api/rest?type=messages").then((r) => r.json()).catch(() => []),
@@ -133,6 +135,7 @@ export default function Control() {
       fetch("/api/stats").then((r) => r.json()).catch(() => null),
       fetch("/api/rest?type=activity").then((r) => r.json()).catch(() => []),
       fetch("/api/jobs").then((r) => r.json()).catch(() => []),
+      fetch("/api/coo").then((r) => r.json()).catch(() => null),
     ]);
     setProjects(Array.isArray(p) ? p : []);
     setTasks(Array.isArray(t) ? t : []);
@@ -142,6 +145,7 @@ export default function Control() {
     setTools(Array.isArray(tl) ? tl : []);
     setActivity(Array.isArray(act) ? act : []);
     setJobs(Array.isArray(jb) ? jb : []);
+    if (coo?.ok) setCooData(coo);
     setAgentsList(Array.isArray(ag?.agents) ? ag.agents : []);
     setWalletInfo(wl);
     if (wl?.masterWallet) {
@@ -426,12 +430,37 @@ export default function Control() {
   async function sendTelegramReport() {
     setBusy("tg");
     try {
-      const d = await api("/api/telegram/send", "POST", { action: "daily_reports" });
+      const d = await api("/api/coo", "POST", { action: "executive_report", sendTelegram: true });
       notify(
-        d.sent > 0
-          ? `${fa(d.sent)} گزارش واقعی به تلگرام ارسال شد ✅`
-          : `ارسال انجام نشد: ${d.errors?.[0] || "تلگرام پیکربندی نشده است"}`
+        d?.telegram?.ok
+          ? "گزارش جامع RNAI (COO) به تلگرام شما ارسال شد ✅"
+          : `گزارش در پنل ثبت شد (${d?.telegram?.error || "تلگرام نیاز به بررسی دارد"})`
       );
+      await load();
+    } catch (err: any) {
+      notify(`⚠️ ${err.message}`);
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function runCooCommand(action: "startup_directive" | "run_cycle" | "executive_report") {
+    setBusy(`coo-${action}`);
+    try {
+      const d = await api("/api/coo", "POST", {
+        action,
+        forceAriaCard: true,
+        sendTelegram: true,
+      });
+      if (action === "startup_directive") {
+        notify("فرمان استارت‌آپ RNAI اجرا شد، موتورهای ناوگان روشن شدند و گزارش به تلگرام ارسال شد 🚀");
+      } else if (action === "run_cycle") {
+        notify("اسکن زنده آریا، بانتی‌هانتر و ایجنت‌های تخصصی با موفقیت اجرا شد 🔄");
+      } else {
+        notify("گزارش جامع اجرایی صادر و به تلگرام ارسال شد 📊");
+      }
+      if (d?.summary) setCooData((prev: any) => ({ ...(prev || {}), ok: true, summary: d.summary }));
+      await load();
     } catch (err: any) {
       notify(`⚠️ ${err.message}`);
     } finally {
@@ -632,6 +661,52 @@ export default function Control() {
                         </p>
                       </div>
                     ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* میز فرماندهی RNAI · مدیر ارشد اجرایی (COO) */}
+              <div className="rounded-3xl border border-emerald-200/70 bg-gradient-to-l from-emerald-50/70 via-white to-cyan-50/60 p-4 md:p-5">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="rounded-full bg-[#0B1220] px-2.5 py-0.5 text-[10px] font-black text-emerald-300">
+                        🏛️ RNAI · مدیر ارشد اجرایی (COO)
+                      </span>
+                      <span className="rounded-full bg-emerald-100 px-2.5 py-0.5 text-[10px] font-bold text-emerald-800">
+                        🔒 قفل مالی Human-in-the-Loop فعال
+                      </span>
+                      {cooData?.summary?.topEmployee && (
+                        <span className="rounded-full bg-amber-100 px-2.5 py-0.5 text-[10px] font-bold text-amber-800">
+                          🥇 کارمند برتر: {cooData.summary.topEmployee.name} (+{fa(cooData.summary.topEmployee.realEarnedUsdt)} USDT)
+                        </span>
+                      )}
+                    </div>
+                    <p className="mt-1.5 text-[11px] leading-5 text-slate-600">
+                      موتورهای پایش آریا (کریپتو)، بانتی‌هانتر (Web3) و ایجنت‌های تخصصی تحت نظارت مستقیم COO هستند؛ هیچ تراکنش مالی بدون تأیید [✅] شما اجرا نمی‌شود.
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      onClick={() => runCooCommand("startup_directive")}
+                      disabled={busy.startsWith("coo-")}
+                      className="rounded-xl bg-[#0B1220] px-3.5 py-2 text-xs font-black text-emerald-300 transition hover:bg-slate-800 disabled:opacity-50"
+                    >
+                      {busy === "coo-startup_directive" ? "⏳ در حال اجرا…" : "🚀 فرمان استارت‌آپ ناوگان"}
+                    </button>
+                    <button
+                      onClick={() => runCooCommand("run_cycle")}
+                      disabled={busy.startsWith("coo-")}
+                      className="rounded-xl border border-slate-300 bg-white px-3.5 py-2 text-xs font-bold text-slate-800 transition hover:bg-slate-50 disabled:opacity-50"
+                    >
+                      {busy === "coo-run_cycle" ? "⏳ اسکن…" : "🔄 اسکن زنده فرصت‌ها"}
+                    </button>
+                    <button
+                      onClick={() => setView("logs")}
+                      className="rounded-xl bg-emerald-600 px-3.5 py-2 text-xs font-bold text-white transition hover:bg-emerald-700"
+                    >
+                      📊 لیدربورد و گزارش جامع
+                    </button>
                   </div>
                 </div>
               </div>
@@ -1166,6 +1241,30 @@ export default function Control() {
                         <span className="text-[9px] text-slate-400">{dt(j.createdAt)}</span>
                       </div>
                       <p className="mt-1 text-[10px] text-slate-500">{j.agentName}{j.detail ? ` • ${j.detail}` : ""}</p>
+                      {j.payload && typeof j.payload === "object" && (
+                        <div className="mt-2 flex flex-wrap gap-1.5 text-[10px]">
+                          {j.payload.estimatedProfitUsdt !== undefined && (
+                            <span className="rounded-lg bg-emerald-50 px-2 py-0.5 font-bold text-emerald-700">
+                              💰 سود تخمینی: +{fa(j.payload.estimatedProfitUsdt)} USDT
+                            </span>
+                          )}
+                          {j.payload.estimatedDuration && (
+                            <span className="rounded-lg bg-slate-100 px-2 py-0.5 text-slate-700">
+                              ⏱ زمان تقریبی: {j.payload.estimatedDuration}
+                            </span>
+                          )}
+                          {j.payload.stopLoss && (
+                            <span className="rounded-lg bg-rose-50 px-2 py-0.5 font-bold text-rose-700">
+                              🛑 حد ضرر: ${j.payload.stopLoss} | اهرم {j.payload.leverage || 1}x
+                            </span>
+                          )}
+                          {j.payload.trustScore !== undefined && (
+                            <span className="rounded-lg bg-cyan-50 px-2 py-0.5 font-bold text-cyan-800">
+                              🛡️ امتیاز ضداسکم: {fa(j.payload.trustScore)}/۱۰۰
+                            </span>
+                          )}
+                        </div>
+                      )}
                       {j.error && <p className="mt-1 rounded bg-red-50 p-2 text-[10px] text-red-600">⛔ {j.error}</p>}
                       {j.status === "awaiting_approval" && (
                         <div className="mt-2 flex gap-2">
@@ -1412,37 +1511,312 @@ export default function Control() {
             </section>
           )}
 
-          {/* ═══════════════ گزارش کارمندان ═══════════════ */}
+          {/* ═══════════════ گزارش کارمندان و فرماندهی RNAI (COO) ═══════════════ */}
           {view === "logs" && (
             <section className="mt-4 space-y-4">
+              {/* هدر فرماندهی RNAI */}
+              <div className="rounded-3xl bg-gradient-to-l from-[#0B1220] via-[#101d33] to-[#0B1220] p-5 text-white">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <span className="rounded-full bg-emerald-500 px-3 py-0.5 text-[10px] font-black text-black">
+                      پروتکل گزارش‌دهی رسمی • RNAI (COO)
+                    </span>
+                    <h3 className="mt-2 text-lg font-black md:text-xl">
+                      گزارش جامع عملکرد شرکت، لیدربورد کارمندان و لاگ زنده عملیات
+                    </h3>
+                    <p className="mt-1 text-[11px] text-slate-300">
+                      تمامی ارقام مستقیماً از تراکنش‌های تأییدشده و جدول <code className="text-emerald-300">agent_activity_logs</code> استخراج می‌شوند. قفل مالی Human-in-the-Loop فعال است.
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      onClick={() => runCooCommand("startup_directive")}
+                      disabled={busy.startsWith("coo-")}
+                      className="rounded-xl bg-emerald-500 px-3.5 py-2 text-xs font-black text-black disabled:opacity-50"
+                    >
+                      {busy === "coo-startup_directive" ? "⏳ در حال اجرا…" : "🚀 استارت‌آپ و اسکن کامل"}
+                    </button>
+                    <button
+                      onClick={() => runCooCommand("executive_report")}
+                      disabled={busy.startsWith("coo-")}
+                      className="rounded-xl bg-[#229ED9] px-3.5 py-2 text-xs font-bold text-white disabled:opacity-50"
+                    >
+                      {busy === "coo-executive_report" ? "⏳ ارسال…" : "📨 ارسال این گزارش به تلگرام"}
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* ۱. خلاصه عملکرد کل شرکت */}
+              {cooData?.summary && (
+                <div className="rounded-3xl border bg-white p-5">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <h3 className="font-black text-slate-900">📊 خلاصه عملکرد کل شرکت</h3>
+                    <span className="text-[10px] text-slate-400">
+                      به‌روزرسانی: {dt(cooData.summary.generatedAt)}
+                    </span>
+                  </div>
+                  <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                    <div className="rounded-2xl border border-emerald-200 bg-emerald-50/60 p-3.5">
+                      <p className="text-[10px] font-bold text-emerald-800">درآمد واقعی محقق‌شده (Confirmed)</p>
+                      <p className="mt-1 text-2xl font-black text-emerald-700">
+                        {fa(cooData.summary.company.confirmedIncomeUsdt)} <span className="text-xs font-bold">USDT</span>
+                      </p>
+                      <p className="mt-1 text-[10px] text-emerald-700/80">
+                        طی {fa(cooData.summary.company.confirmedTxCount)} تراکنش تأییدشده
+                      </p>
+                    </div>
+                    <div className="rounded-2xl border border-amber-200 bg-amber-50/60 p-3.5">
+                      <p className="text-[10px] font-bold text-amber-800">در انتظار تأیید نهایی شما (HITL)</p>
+                      <p className="mt-1 text-2xl font-black text-amber-700">
+                        {fa(cooData.summary.company.pendingIncomeUsdt)} <span className="text-xs font-bold">USDT</span>
+                      </p>
+                      <p className="mt-1 text-[10px] text-amber-700/80">
+                        {fa(cooData.summary.company.pendingApprovalsCount)} کارت پیشنهاد منتظر دکمه [✅]/[❌]
+                      </p>
+                    </div>
+                    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3.5">
+                      <p className="text-[10px] font-bold text-slate-600">وضعیت ناوگان و پایپ‌لاین پروژه‌ها</p>
+                      <p className="mt-1 text-lg font-black text-slate-900">
+                        {fa(cooData.summary.company.activeAgentsCount)} از {fa(cooData.summary.company.totalAgentsCount)} کارمند فعال
+                      </p>
+                      <p className="mt-1 text-[10px] text-slate-500">
+                        ظرفیت پروژه‌های باز: {fa(cooData.summary.company.openProjectsPipelineUsdt)} USDT ({fa(cooData.summary.company.openProjectsCount)} پروژه)
+                      </p>
+                    </div>
+                    <div className="rounded-2xl border border-cyan-200 bg-cyan-50/50 p-3.5">
+                      <p className="text-[10px] font-bold text-cyan-900">کیف پول واحد شرکت (Master Wallet)</p>
+                      <p className="mt-1 truncate font-mono text-[11px] font-bold text-slate-800" dir="ltr">
+                        {cooData.summary.company.masterWallet.address || "ثبت نشده"}
+                      </p>
+                      <div className="mt-1.5 flex flex-wrap items-center justify-between gap-1 text-[10px]">
+                        <span className="rounded bg-cyan-100 px-1.5 py-0.5 font-bold text-cyan-900">
+                          {cooData.summary.company.masterWallet.activeNetwork}
+                        </span>
+                        {cooData.summary.company.masterWallet.address && (
+                          <button
+                            onClick={() => copyText(cooData.summary.company.masterWallet.address, "آدرس کیف پول واحد کپی شد ✅")}
+                            className="font-bold text-cyan-700 underline"
+                          >
+                            کپی آدرس
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* ۲. وضعیت لیدربورد و کارمند برتر */}
+              {cooData?.summary?.leaderboard?.length > 0 && (
+                <div className="rounded-3xl border bg-white p-5">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <h3 className="font-black text-slate-900">🏆 وضعیت لیدربورد و کارمند برتر</h3>
+                    <span className="text-[10px] text-slate-500">
+                      معیار رتبه‌بندی: سودآوری واقعی (USDT) + پروژه‌های موفق − نرخ خطا
+                    </span>
+                  </div>
+
+                  {cooData.summary.topEmployee && (
+                    <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-amber-300 bg-gradient-to-l from-amber-50 via-yellow-50/60 to-white p-4">
+                      <div>
+                        <span className="rounded-full bg-amber-400 px-2.5 py-0.5 text-[10px] font-black text-slate-950">
+                          🌟 کارمند برتر فعلی شرکت
+                        </span>
+                        <h4 className="mt-1.5 text-base font-black text-slate-900">
+                          {cooData.summary.topEmployee.name}
+                        </h4>
+                        <p className="text-[11px] text-slate-600">
+                          دپارتمان: {cooData.summary.topEmployee.department}
+                        </p>
+                      </div>
+                      <div className="flex flex-wrap gap-3 text-center text-xs">
+                        <div className="rounded-xl bg-white px-3 py-2 shadow-sm">
+                          <p className="text-[9px] text-slate-400">سود واقعی</p>
+                          <b className="text-emerald-600">+{fa(cooData.summary.topEmployee.realEarnedUsdt)} USDT</b>
+                        </div>
+                        <div className="rounded-xl bg-white px-3 py-2 shadow-sm">
+                          <p className="text-[9px] text-slate-400">پروژه موفق</p>
+                          <b>{fa(cooData.summary.topEmployee.tasksCompleted)}</b>
+                        </div>
+                        <div className="rounded-xl bg-white px-3 py-2 shadow-sm">
+                          <p className="text-[9px] text-slate-400">نرخ خطا</p>
+                          <b className="text-emerald-700">{fa(cooData.summary.topEmployee.errorRatePct)}٪</b>
+                        </div>
+                        <div className="rounded-xl bg-white px-3 py-2 shadow-sm">
+                          <p className="text-[9px] text-slate-400">امتیاز کل</p>
+                          <b className="text-amber-700">{fa(cooData.summary.topEmployee.compositeScore)}</b>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="mt-3 overflow-x-auto">
+                    <table className="w-full text-right text-xs">
+                      <thead>
+                        <tr className="border-b text-[10px] text-slate-400">
+                          <th className="py-2 pr-2">رتبه</th>
+                          <th className="py-2">کارمند و دپارتمان</th>
+                          <th className="py-2">سود واقعی (USDT)</th>
+                          <th className="py-2">پروژه‌های موفق</th>
+                          <th className="py-2">نرخ خطا</th>
+                          <th className="py-2">تحقق هدف ماهانه</th>
+                          <th className="py-2 pl-2">امتیاز عملکرد</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y">
+                        {cooData.summary.leaderboard.map((row: any) => (
+                          <tr key={row.id} className={row.isTopEmployee ? "bg-amber-50/40 font-bold" : ""}>
+                            <td className="py-2.5 pr-2">
+                              <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-black">
+                                {row.rank === 1 ? "🥇 ۱" : row.rank === 2 ? "🥈 ۲" : row.rank === 3 ? "🥉 ۳" : fa(row.rank)}
+                              </span>
+                            </td>
+                            <td className="py-2.5">
+                              <div className="font-bold text-slate-900">{row.name}</div>
+                              <div className="text-[10px] font-normal text-slate-500">{row.department}</div>
+                            </td>
+                            <td className="py-2.5 font-black text-emerald-600">
+                              {row.realEarnedUsdt > 0 ? `+${fa(row.realEarnedUsdt)}` : "۰"} USDT
+                            </td>
+                            <td className="py-2.5">{fa(row.tasksCompleted)}</td>
+                            <td className="py-2.5">
+                              <span className={`rounded px-1.5 py-0.5 text-[10px] font-bold ${row.errorRatePct > 10 ? "bg-red-100 text-red-700" : "bg-emerald-100 text-emerald-700"}`}>
+                                {fa(row.errorRatePct)}٪
+                              </span>
+                            </td>
+                            <td className="py-2.5 text-[10px] text-slate-600">
+                              {fa(row.targetProgressPct)}٪ از {fa(row.monthlyTargetUsdt)} USDT
+                            </td>
+                            <td className="py-2.5 pl-2 font-black text-slate-800">{fa(row.compositeScore)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {/* ۳. چالش‌ها و موانع */}
+              {cooData?.summary?.blockers && (
+                <div className="rounded-3xl border bg-white p-5">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <h3 className="font-black text-slate-900">⚠️ چالش‌ها و موانع (نیازمند بررسی مدیرعامل)</h3>
+                    <Link href="/control/system" className="text-[11px] font-bold text-slate-500 underline">
+                      مشاهده کامل سلامت سیستم ←
+                    </Link>
+                  </div>
+                  <div className="mt-3 space-y-2.5">
+                    {cooData.summary.blockers.map((b: any) => (
+                      <div
+                        key={b.code}
+                        className={`rounded-2xl border p-3.5 ${
+                          b.severity === "critical"
+                            ? "border-red-200 bg-red-50/70"
+                            : b.severity === "warning"
+                            ? "border-amber-200 bg-amber-50/60"
+                            : "border-slate-200 bg-slate-50/70"
+                        }`}
+                      >
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <b className="text-xs text-slate-900">
+                            {b.severity === "critical" ? "🔴" : b.severity === "warning" ? "🟠" : "🔵"} {b.component} — {b.title}
+                          </b>
+                          <span className="rounded-full bg-white px-2 py-0.5 text-[9px] font-bold text-slate-600">
+                            {b.severity === "critical" ? "اقدام فوری" : b.severity === "warning" ? "نیازمند بررسی" : "اطلاع‌رسانی"}
+                          </span>
+                        </div>
+                        <p className="mt-1 text-[11px] leading-5 text-slate-600">{b.detail}</p>
+                        <p className="mt-1 text-[10px] font-bold text-slate-800">💡 راهکار پیشنهادی COO: {b.actionRequired}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* ۴. نسخه متنی رسمی گزارش اجرایی */}
+              {cooData?.summary?.reportText && (
+                <div className="rounded-3xl border bg-white p-5">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <h3 className="font-black">📜 متن رسمی گزارش استارت‌آپ RNAI (COO)</h3>
+                    <button
+                      onClick={() => copyText(cooData.summary.reportText, "متن کامل گزارش اجرایی کپی شد ✅")}
+                      className="rounded-xl border px-3 py-1.5 text-[11px] font-bold hover:bg-slate-50"
+                    >
+                      📋 کپی متن گزارش
+                    </button>
+                  </div>
+                  <pre className="mt-3 whitespace-pre-wrap rounded-2xl bg-slate-900 p-4 font-sans text-[11px] leading-6 text-slate-100">
+                    {cooData.summary.reportText}
+                  </pre>
+                </div>
+              )}
+
+              {/* ۵. دفتر زنده رویدادهای واقعی (agent_activity_logs) */}
               <div className="rounded-3xl border bg-white p-5">
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <h3 className="font-black">🧾 دفتر رویدادهای واقعی (agent_activity_logs)</h3>
-                  <Link href="/control/system" className="text-[11px] font-bold text-slate-500 underline">
-                    خطاهای سیستم ←
-                  </Link>
+                  <h3 className="font-black">🧾 جدول زنده فعالیت کارمندان (agent_activity_logs)</h3>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {(
+                      [
+                        ["all", "همه"],
+                        ["success", "موفق"],
+                        ["pending", "در انتظار تأیید"],
+                        ["error", "خطاها"],
+                      ] as const
+                    ).map(([k, label]) => (
+                      <button
+                        key={k}
+                        onClick={() => setLogFilter(k)}
+                        className={`rounded-full px-2.5 py-1 text-[10px] font-bold ${
+                          logFilter === k ? "bg-[#0B1220] text-white" : "border bg-slate-50 text-slate-600"
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
                 <ul className="mt-3 space-y-2">
-                  {activity.slice(0, 60).map((a: any) => (
-                    <li key={a.id} className="rounded-2xl border p-3">
-                      <div className="flex flex-wrap items-center justify-between gap-1">
-                        <div className="flex items-center gap-2">
-                          <span className={`h-1.5 w-1.5 rounded-full ${a.status === "failed" ? "bg-red-500" : a.status === "pending" ? "bg-amber-500" : "bg-emerald-500"}`} />
-                          <b className="text-xs">{a.action}</b>
-                          {Number(a.rewardUsdt) > 0 && (
-                            <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-[9px] font-black text-emerald-700">
-                              +{fa(a.rewardUsdt)} USDT
-                            </span>
-                          )}
+                  {activity
+                    .filter((a: any) => {
+                      if (logFilter === "all") return true;
+                      if (logFilter === "error") return a.status === "failed" || a.status === "error";
+                      return a.status === logFilter;
+                    })
+                    .slice(0, 80)
+                    .map((a: any) => (
+                      <li key={a.id} className="rounded-2xl border p-3">
+                        <div className="flex flex-wrap items-center justify-between gap-1">
+                          <div className="flex items-center gap-2">
+                            <span
+                              className={`h-2 w-2 rounded-full ${
+                                a.status === "failed" || a.status === "error"
+                                  ? "bg-red-500"
+                                  : a.status === "pending"
+                                  ? "bg-amber-500"
+                                  : a.status === "info"
+                                  ? "bg-cyan-500"
+                                  : "bg-emerald-500"
+                              }`}
+                            />
+                            <b className="text-xs">{a.action}</b>
+                            {Number(a.rewardUsdt) > 0 && (
+                              <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-[9px] font-black text-emerald-700">
+                                +{fa(a.rewardUsdt)} USDT
+                              </span>
+                            )}
+                          </div>
+                          <span className="text-[9px] text-slate-400">
+                            {a.agentName} • {dt(a.createdAt)} • {a.source}
+                          </span>
                         </div>
-                        <span className="text-[9px] text-slate-400">{a.agentName} • {dt(a.createdAt)} • {a.source}</span>
-                      </div>
-                      {a.detail && <p className="mt-1 text-[10px] leading-5 text-slate-500">{a.detail}</p>}
-                      {a.txHash && (
-                        <p className="mt-1 truncate font-mono text-[9px] text-slate-400" dir="ltr">{a.txHash}</p>
-                      )}
-                    </li>
-                  ))}
+                        {a.detail && <p className="mt-1 whitespace-pre-wrap text-[10px] leading-5 text-slate-600">{a.detail}</p>}
+                        {a.txHash && (
+                          <p className="mt-1 truncate font-mono text-[9px] text-slate-400" dir="ltr">{a.txHash}</p>
+                        )}
+                      </li>
+                    ))}
                   {activity.length === 0 && (
                     <p className="rounded-2xl bg-slate-50 p-6 text-center text-xs text-slate-400">
                       هنوز رویدادی ثبت نشده است.

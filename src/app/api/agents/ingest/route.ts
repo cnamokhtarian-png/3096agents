@@ -162,16 +162,21 @@ export async function POST(req: NextRequest) {
       agentId: targetAgent.id,
       agentName: targetAgent.name,
       kind: "confirm_deposit",
-      title: `تأیید واریز ${amountUsdt} USDT — ${title}`,
-      detail: `هش: ${txHash}\nشبکه: ${network}\nدلیل نیاز به تأیید: ${result.verification.reason}`,
+      title: `نهایی‌سازی مالی واریز ${amountUsdt} USDT — ${title}`,
+      detail: `هش: ${txHash}\nشبکه: ${network}\nبررسی زنجیره: ${result.verification.reason}`,
       payload: {
         transactionId: result.transaction.id,
         txHash,
         amountUsdt,
+        estimatedProfitUsdt: amountUsdt,
+        estimatedDuration: "ثبت آنی پس از تأیید مدیرعامل",
+        analysisReason: result.verification.verified
+          ? `تراکنش روی شبکه ${network} رویت شد (${result.verification.reason})؛ طبق پروتکل HITL منتظر تأیید نهایی شماست.`
+          : `گزارش واریز از ایجنت (${result.verification.reason})؛ نیازمند بررسی هش و تأیید نهایی شماست.`,
         network,
-        verifiedOnchain: false,
+        verifiedOnchain: Boolean(result.verification.verified),
       },
-      risk: "medium",
+      risk: result.verification.verified ? "low" : "medium",
       requiresApproval: true,
     });
 

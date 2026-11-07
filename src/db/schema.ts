@@ -201,12 +201,52 @@ export const exchangeOrders = agentos.table("exchange_orders", {
 });
 
 export const marketSnapshots = agentos.table("market_snapshots", {
-  id: bigserial("id", { mode: "number" }).primaryKey(),
+  id: serial("id").primaryKey(),
   symbol: text("symbol").notNull(),
   price: numeric("price").notNull(),
   changePct: numeric("change_pct"),
+  rsi: real("rsi").notNull().default(0),
+  macdHist: real("macd_hist").notNull().default(0),
+  ma20: real("ma20").notNull().default(0),
+  ma50: real("ma50").notNull().default(0),
+  support: real("support").notNull().default(0),
+  resistance: real("resistance").notNull().default(0),
+  volumeUsdt: real("volume_usdt").notNull().default(0),
+  volatilityPct: real("volatility_pct").notNull().default(0),
+  candles: integer("candles").notNull().default(0),
   source: text("source").notNull().default("binance"),
   fetchedAt: timestamp("fetched_at", { withTimezone: true }).defaultNow(),
+});
+
+export const tradeSignals = agentos.table("trade_signals", {
+  id: serial("id").primaryKey(),
+  agentId: integer("agent_id").notNull(),
+  agentName: text("agent_name").notNull(),
+  symbol: text("symbol").notNull().default("BTCUSDT"),
+  side: text("side").notNull(),
+  entryPrice: real("entry_price").notNull(),
+  takeProfit: real("take_profit").notNull(),
+  stopLoss: real("stop_loss").notNull(),
+  targetPct: real("target_pct").notNull().default(0),
+  stopPct: real("stop_pct").notNull().default(0),
+  riskReward: real("risk_reward").notNull().default(0),
+  leverage: integer("leverage").notNull().default(2),
+  positionUsdt: real("position_usdt").notNull().default(50),
+  estimatedProfitUsdt: real("estimated_profit_usdt").notNull().default(0),
+  estimatedHoursMin: integer("estimated_hours_min").notNull().default(4),
+  estimatedHoursMax: integer("estimated_hours_max").notNull().default(12),
+  confidence: real("confidence").notNull().default(0),
+  rsi: real("rsi").notNull().default(0),
+  macdHist: real("macd_hist").notNull().default(0),
+  ma20: real("ma20").notNull().default(0),
+  ma50: real("ma50").notNull().default(0),
+  support: real("support").notNull().default(0),
+  resistance: real("resistance").notNull().default(0),
+  volatilityPct: real("volatility_pct").notNull().default(0),
+  dataSource: text("data_source").notNull().default("binance"),
+  analysisReason: text("analysis_reason").notNull().default(""),
+  status: text("status").notNull().default("pending"),
+  createdAt: timestamp("created_at").defaultNow(),
 });
 
 export const telegramUpdates = agentos.table("telegram_updates", {

@@ -5,7 +5,7 @@
   "$do_not_commit_note": "اگر می‌خواهید این فایل در گیت بماند، کلیدها را خالی بگذارید و مقادیر را در Vercel Environment Variables ست کنید. مقادیر واقعی در Vercel (نوع sensitive) امن‌تر و پایدارتر است.",
   "ai": {
     "GEMINI_API_KEY": "",
-    "GEMINI_MODEL": "gemini-2.0-flash",
+    "GEMINI_MODEL": "gemini-3.8-flash",
     "GEMINI_BASE_URL": "https://generativelanguage.googleapis.com/v1beta"
   },
   "telegram": {

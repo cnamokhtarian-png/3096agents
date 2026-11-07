@@ -143,18 +143,18 @@ export function appBaseUrl(req?: Request) {
   return "";
 }
 
-/** کیبورد تأیید/رد یک Job واقعی. */
+/** کیبورد تأیید/رد یک Job واقعی (پروتکل Human-in-the-Loop). */
 export function jobKeyboard(jobId: number, withEdit = true): ReplyMarkup {
   const row: InlineButton[] = [
-    { text: "✅ تأیید و اجرا", callback_data: `ap:${jobId}` },
-    { text: "❌ رد", callback_data: `rj:${jobId}` },
+    { text: "[✅] تأیید و اجرا", callback_data: `ap:${jobId}` },
+    { text: "[❌] رد پیشنهاد", callback_data: `rj:${jobId}` },
   ];
   const second: InlineButton[] = [{ text: "📊 مشاهده در پنل", callback_data: `op:${jobId}` }];
   if (withEdit) second.push({ text: "⏸ توقف کارمند", callback_data: `pz:${jobId}` });
   return { inline_keyboard: [row, second] };
 }
 
-/** پیام درخواست تأیید برای مدیرعامل. */
+/** کارت استاندارد پیشنهاد فرصت / تأیید انسانی (HITL) برای مدیرعامل. */
 export async function sendJobApprovalRequest(job: {
   id: number;
   agentName: string;
@@ -162,6 +162,7 @@ export async function sendJobApprovalRequest(job: {
   detail?: string;
   risk?: string;
   kind: string;
+  payload?: Record<string, unknown>;
 }) {
   const chatId = ENV.telegramAdminChat();
   if (!telegramConfigured() || !chatId) {
@@ -171,15 +172,56 @@ export async function sendJobApprovalRequest(job: {
       description: "TELEGRAM_BOT_TOKEN یا TELEGRAM_ADMIN_CHAT_ID ست نشده است.",
     };
   }
+  const p = (job.payload || {}) as Record<string, any>;
   const riskLabel =
     job.risk === "high" ? "🔴 ریسک بالا" : job.risk === "low" ? "🟢 ریسک پایین" : "🟡 ریسک متوسط";
+
+  const metaLines: string[] = [];
+  if (p.symbol && p.entryPrice) {
+    metaLines.push(
+      `• <b>نماد و جهت:</b> <code>${escapeHtml(String(p.symbol))}</code> (${escapeHtml(String(p.directionLabel || p.side || ""))})`,
+    );
+    metaLines.push(
+      `• <b>نقطه ورود:</b> <code>$${escapeHtml(String(p.entryPrice))}</code> | <b>اهرم کنترل‌شده:</b> <code>${escapeHtml(String(p.leverage || 1))}x</code>`,
+    );
+    if (p.stopLoss && p.takeProfit) {
+      metaLines.push(
+        `• <b>حد ضرر (SL):</b> <code>$${escapeHtml(String(p.stopLoss))}</code> | <b>حد سود (TP):</b> <code>$${escapeHtml(String(p.takeProfit))}</code> (R/R: ${escapeHtml(String(p.riskReward || "2.0"))})`,
+      );
+    }
+  }
+  if (p.estimatedProfitUsdt !== undefined && Number(p.estimatedProfitUsdt) >= 0) {
+    metaLines.push(
+      `• 💰 <b>سود / ارزش تخمینی:</b> <code>+${Number(p.estimatedProfitUsdt).toLocaleString("en-US", { maximumFractionDigits: 2 })} USDT</code>`,
+    );
+  }
+  if (p.estimatedDuration) {
+    metaLines.push(
+      `• ⏱ <b>زمان تقریبی:</b> ${escapeHtml(String(p.estimatedDuration))}`,
+    );
+  }
+  if (p.trustScore !== undefined) {
+    metaLines.push(
+      `• 🛡️ <b>امتیاز حقیقت‌سنجی ضداسکم:</b> <code>${escapeHtml(String(p.trustScore))}/100</code>`,
+    );
+  }
+  if (p.analysisReason) {
+    metaLines.push(
+      `• 🧠 <b>دلیل تحلیل:</b> ${escapeHtml(String(p.analysisReason))}`,
+    );
+  }
+  if (p.link) {
+    metaLines.push(`• 🔗 <b>لینک مرجع:</b> ${escapeHtml(String(p.link))}`);
+  }
+
   const text =
-    `🔔 <b>درخواست تأیید جدید</b> #${job.id}\n` +
+    `🔔 <b>کارت پیشنهاد فرصت (HITL)</b> #${job.id}\n` +
     `👤 کارمند: <b>${escapeHtml(job.agentName)}</b>\n` +
-    `📋 اقدام: <b>${escapeHtml(job.title)}</b>\n` +
+    `📋 عنوان: <b>${escapeHtml(job.title)}</b>\n` +
     `${riskLabel} • نوع: <code>${escapeHtml(job.kind)}</code>\n` +
-    (job.detail ? `\n${escapeHtml(job.detail)}\n` : "") +
-    `\nبا تأیید، دستور همین حالا در دیتابیس و صرافی اجرا می‌شود.`;
+    (metaLines.length ? `\n${metaLines.join("\n")}\n` : "") +
+    (job.detail && !metaLines.length ? `\n${escapeHtml(job.detail)}\n` : "") +
+    `\n🔒 <i>قفل ایمنی مالی (COO): بدون کلیک شما روی [✅] هیچ واریز، برداشت یا نهایی‌سازی مالی انجام نمی‌شود.</i>`;
   const res = await sendTelegramMessage(chatId, text, jobKeyboard(job.id));
   return res;
 }

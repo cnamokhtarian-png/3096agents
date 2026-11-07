@@ -29,6 +29,12 @@ import {
 } from "@/lib/jobs";
 import { generateAgentReport } from "@/lib/report";
 import { conf } from "@/lib/config";
+import {
+  buildCooExecutiveSummary,
+  executeCooStartupDirective,
+  generateCooExecutiveReport,
+  runFleetCycle,
+} from "@/lib/coo";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -93,16 +99,56 @@ async function handleAdminCommand(text: string, chatId: string | number) {
     await sendTelegramMessage(
       chatId,
       [
-        "<b>🏢 مرکز فرماندهی ایجنت‌ها</b>",
-        "دستورهای موجود:",
-        "• /status — وضعیت ناوگان",
-        "• /jobs — کارهای منتظر تأیید",
-        "• /report — گزارش همه کارمندان",
+        "<b>🏛️ مرکز فرماندهی RNAI (COO) — Agent Company OS</b>",
+        "دستورهای اجرایی مدیرعامل:",
+        "• /coo — گزارش جامع شرکت، لیدربورد، کارمند برتر و موانع",
+        "• /scan — اجرای فوری چرخه اسکن آریا، بانتی‌هانتر و ایجنت‌ها",
+        "• /startup — ابلاغ مجدد شرح وظایف و استارت‌آپ کل ناوگان",
+        "• /status — وضعیت خلاصه ناوگان",
+        "• /jobs — کارت‌های پیشنهاد منتظر تأیید [✅]/[❌]",
+        "• /report — گزارش تکی کارمندان",
         "• /id — نمایش چت‌آیدی شما",
-        "• /webhook — وضعیت وبهوک",
-        "تأیید کارها با دکمه‌های شیشه‌ای همان پیام انجام می‌شود.",
+        "• /webhook — وضعیت وبهوک تلگرام",
+        "",
+        "🔒 <i>پروتکل HITL فعال: هیچ تراکنشی بدون دکمه [✅] شما نهایی نمی‌شود.</i>",
       ].join("\n"),
     );
+    return true;
+  }
+
+  if (cmd === "/coo" || cmd === "/leaderboard") {
+    const res = await generateCooExecutiveReport({ sendTelegram: false });
+    await sendTelegramMessage(chatId, res.summary.telegramHtml);
+    return true;
+  }
+
+  if (cmd === "/scan") {
+    await sendTelegramMessage(
+      chatId,
+      "⏳ <b>RNAI (COO):</b> در حال اجرای اسکن زنده بازار رمزارز (آریا)، فیدهای بانتی و صف پروژه‌ها...",
+    );
+    const cycle = await runFleetCycle({
+      charterFirst: false,
+      forceAriaCard: true,
+      maxSpecialistProposals: 1,
+    });
+    const summary = await buildCooExecutiveSummary();
+    await sendTelegramMessage(
+      chatId,
+      `✅ <b>چرخه اسکن ناوگان تکمیل شد</b> (${cycle.durationMs}ms)\n` +
+        `• تحلیل آریا: ${cycle.aria.setups?.length ?? 0} رمزارز\n` +
+        `• فیدهای بانتی‌هانتر: ${"feedsChecked" in cycle.bounty ? cycle.bounty.feedsChecked : 0} منبع\n` +
+        `• کارت‌های منتظر تأیید شما: <b>${summary.company.pendingApprovalsCount}</b>`,
+    );
+    return true;
+  }
+
+  if (cmd === "/startup") {
+    await sendTelegramMessage(
+      chatId,
+      "🚀 <b>RNAI (COO):</b> در حال ابلاغ شرح وظایف، روشن‌کردن موتورهای ناوگان و تهیه گزارش استارت‌آپ...",
+    );
+    await executeCooStartupDirective({ sendTelegramReport: true });
     return true;
   }
 

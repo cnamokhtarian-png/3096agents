@@ -208,6 +208,10 @@ const ALIASES: Record<string, string[]> = {
   EXCHANGE_API_KEY: ["BINANCE_API_KEY"],
 };
 
+function isEnabledFlag(raw: string): boolean {
+  return ["true", "1", "yes", "on", "enabled"].includes(raw.trim().toLowerCase());
+}
+
 export function auditEnv() {
   const checks: EnvCheck[] = DEFS.map((d) => ({
     ...d,
@@ -218,7 +222,7 @@ export function auditEnv() {
   const exchangeReady =
     (has("EXCHANGE_API_KEY") || has("BINANCE_API_KEY")) &&
     (has("EXCHANGE_SECRET_KEY") || has("EXCHANGE_API_SECRET") || has("BINANCE_SECRET_KEY"));
-  const tradingEnabled = conf("AGENT_TRADING_ENABLED").toLowerCase() === "true";
+  const tradingEnabled = isEnabledFlag(conf("AGENT_TRADING_ENABLED"));
 
   return {
     checks,
@@ -267,8 +271,8 @@ export const ENV = {
     conf("EXCHANGE_SECRET_KEY") ||
     conf("EXCHANGE_API_SECRET") ||
     conf("BINANCE_SECRET_KEY"),
-  exchangeTestnet: () => conf("EXCHANGE_TESTNET").toLowerCase() === "true",
-  tradingEnabled: () => conf("AGENT_TRADING_ENABLED").toLowerCase() === "true",
+  exchangeTestnet: () => isEnabledFlag(conf("EXCHANGE_TESTNET")),
+  tradingEnabled: () => isEnabledFlag(conf("AGENT_TRADING_ENABLED")),
   geminiKey: () => conf("GEMINI_API_KEY"),
   cronSecret: () => conf("CRON_SECRET"),
   workerUrl: () => conf("AGENT_WORKER_URL"),
