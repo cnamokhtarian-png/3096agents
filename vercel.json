@@ -1,10 +1,28 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "nextjs",
-  "regions": ["fra1"],
+  "regions": [
+    "fra1"
+  ],
   "functions": {
     "src/app/api/**/*.ts": {
       "maxDuration": 30
+    },
+    "src/app/api/cron/tick/route.ts": {
+      "maxDuration": 120
+    },
+    "src/app/api/telegram/webhook/route.ts": {
+      "maxDuration": 60
     }
-  }
+  },
+  "crons": [
+    {
+      "path": "/api/cron/tick?job=full",
+      "schedule": "0 6 * * *"
+    },
+    {
+      "path": "/api/cron/tick?job=reports",
+      "schedule": "30 6 * * *"
+    }
+  ]
 }

@@ -1,43 +1,24 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db";
-import { agents, transactions, agentLogs } from "@/db/schema";
-import { eq } from "drizzle-orm";
+import { agents, transactions } from "@/db/schema";
+import { and, eq } from "drizzle-orm";
 import { ensureSeed, getMasterWallet } from "@/lib/seed";
-import { randomBytes } from "crypto";
+import { ingestExternalIncome, recordAgentError } from "@/lib/agent-execution";
+import { createJob } from "@/lib/jobs";
+import { normalizeNetwork } from "@/lib/onchain";
 
-const cryptoStrategies: Record<
-  string,
-  { label: string; min: number; max: number; report: (amt: number, wallet: string) => string }
-> = {
-  arbitrage: {
-    label: "آربیتراژ صرافی‌ها (DEX/CEX Spread)",
-    min: 25,
-    max: 95,
-    report: (amt, wallet) =>
-      `🪙 گزارش کارمند رمزارز — استراتژی آربیتراژ\n• جفت ارز: TON/USDT و SOL/USDT (اختلاف قیمت ۱.۶۵٪ بین OKX و Raydium)\n• حجم معامله چرخشی: ۲٬۴۰۰ USDT بدون ریسک جهت‌دار\n• سود خالص محقق‌شده: +${amt} USDT\n• وضعیت واریز: واریز خودکار به کیف پول واحد (${wallet}) انجام شد ✅`,
-  },
-  whale_alert: {
-    label: "رصد نهنگ‌ها و فروش سیگنال آن‌چین",
-    min: 35,
-    max: 120,
-    report: (amt, wallet) =>
-      `🐋 گزارش کارمند رمزارز — شکار جریان نهنگ‌ها\n• کیف پول هوشمند شناسایی‌شده: ورود ۳.۲M USDT به استخر نقدینگی Arbitrum\n• بسته تحلیل آن‌چین برای ۴۸ مشترک VIP تلگرام ارسال شد\n• کارمزد اشتراک جمع‌آوری‌شده: +${amt} USDT\n• وضعیت واریز: واریز مستقیم به کیف پول واحد (${wallet}) ✅`,
-  },
-  airdrop: {
-    label: "شکار ایردراپ و پاداش تست‌نت",
-    min: 18,
-    max: 75,
-    report: (amt, wallet) =>
-      `🪂 گزارش کارمند رمزارز — ایردراپ و فارمینگ خودکار\n• تکمیل تسک‌های آن‌چین شبکه L2 و تبدیل توکن پاداش به استیبل‌کوین\n• بازده خالص نقدشده: +${amt} USDT\n• وضعیت واریز: تجمیع در کیف پول واحد (${wallet}) ✅`,
-  },
-  signal_fee: {
-    label: "مشاوره و ربات کپی‌ترید کریپتو",
-    min: 40,
-    max: 150,
-    report: (amt, wallet) =>
-      `📈 گزارش کارمند رمزارز — کارمزد عملکرد کپی‌ترید\n• بسته شدن پوزیشن لانگ ETH با سود +۴.۲٪ برای حساب‌های متصل\n• سهم ۲۰٪ کارمزد موفقیت (Performance Fee): +${amt} USDT\n• وضعیت واریز: انتقال آنی به کیف پول واحد (${wallet}) ✅`,
-  },
-};
+export const dynamic = "force-dynamic";
+
+/**
+ * API واقعی دریافت درآمد از ربات‌های بیرونی (n8n / TradingView / پایتون).
+ *
+ * تغییرات کلیدی نسبت به نسخه‌ی نمایشی:
+ *  • کلید API اجباری است (هیچ درخواستی به «اولین ایجنت» نسبت داده نمی‌شود).
+ *  • مبلغ و هش تراکنش اجباری‌اند؛ پاداش تصادفی حذف شده است.
+ *  • هر هش فقط یک‌بار ثبت می‌شود (idempotent).
+ *  • اگر تأیید زنجیره‌ای موفق شود → همان لحظه درآمد واقعی ثبت می‌شود.
+ *    در غیر این صورت → «در انتظار تأیید مدیرعامل» + درخواست تأیید تلگرام.
+ */
 
 export async function GET() {
   await ensureSeed();
@@ -46,18 +27,27 @@ export async function GET() {
     ok: true,
     endpoint: "/api/agents/ingest",
     method: "POST",
+    behavior: "real-only",
     description:
-      "API استاندارد اتصال ایجنت‌های خارجی و کارمند رمزارز برای واریز مستقیم درآمد به کیف پول واحد",
+      "درآمد واقعی را ثبت می‌کند. بدون هش تراکنش معتبر یا تأیید مدیرعامل هیچ مبلغی در درآمد محقق‌شده ثبت نمی‌شود.",
     masterWallet,
     headers: {
       "Content-Type": "application/json",
-      "x-agent-key": "کلید اختصاصی ایجنت (یا AGENT_MASTER_API_KEY)",
+      "x-agent-key": "کلید اختصاصی ایجنت (از داشبورد بگیرید)",
+    },
+    requiredBody: {
+      amountUsdt: "عدد > 0 — مبلغ واقعی محقق‌شده",
+      txHash: "هش تراکنش واقعی (حداقل ۱۶ کاراکتر)",
+      network: "TRC20 | BEP20 | ERC20 | TON",
+      title: "عنوان درآمد (اختیاری)",
+      slug: "در صورت استفاده از AGENT_MASTER_API_KEY الزامی است",
     },
     exampleBody: {
-      slug: "crypto-employee",
-      amountUsdt: 55,
-      title: "سود آربیتراژ جفت ارز TON/USDT",
-      strategy: "arbitrage",
+      slug: "custom-webhook-worker",
+      amountUsdt: 55.25,
+      txHash: "0x9f41c0d2b7a8e6f5d4c3b2a1908f7e6d5c4b3a2910f8e7d6c5b4a39281706f5e",
+      network: "BEP20",
+      title: "سود واقعی آربیتراژ TON/USDT",
     },
   });
 }
@@ -65,115 +55,134 @@ export async function GET() {
 export async function POST(req: NextRequest) {
   await ensureSeed();
   const b = await req.json().catch(() => ({}));
+
   const headerKey =
-    req.headers.get("x-agent-key") ||
-    req.headers.get("authorization")?.replace("Bearer ", "") ||
-    "";
+    (req.headers.get("x-agent-key") || "").trim() ||
+    (req.headers.get("authorization") || "").replace(/^Bearer\s+/i, "").trim();
 
-  const masterWallet = await getMasterWallet();
-
-  // پیدا کردن ایجنت از طریق id، slug یا کلید API
-  let targetAgent: any = null;
-  const allAgents = await db.select().from(agents);
-
-  if (b.agentId) {
-    targetAgent = allAgents.find((a) => a.id === Number(b.agentId));
-  } else if (b.slug) {
-    targetAgent = allAgents.find((a) => a.slug === b.slug);
-  } else if (headerKey) {
-    targetAgent = allAgents.find((a) => a.apiKey === headerKey);
-  }
-
-  // بررسی کلید امنیتی اگر درخواست از بیرون با هدر ارسال شده باشد
-  const masterKey = process.env.AGENT_MASTER_API_KEY;
-  if (
-    headerKey &&
-    !targetAgent &&
-    (!masterKey || headerKey !== masterKey)
-  ) {
+  if (!headerKey) {
     return NextResponse.json(
-      { error: "کلید API ایجنت نامعتبر است (Unauthorized)" },
+      { ok: false, error: "هدر x-agent-key لازم است (Unauthorized)" },
       { status: 401 }
     );
   }
 
-  if (!targetAgent) {
-    targetAgent =
-      allAgents.find((a) => a.specialty === "crypto") || allAgents[0];
+  const masterKey = process.env.AGENT_MASTER_API_KEY?.trim();
+  const allAgents = await db.select().from(agents);
+
+  let targetAgent: (typeof allAgents)[number] | undefined;
+  if (headerKey === masterKey && masterKey) {
+    if (b.agentId) targetAgent = allAgents.find((a) => a.id === Number(b.agentId));
+    else if (b.slug) targetAgent = allAgents.find((a) => a.slug === String(b.slug));
+  } else {
+    targetAgent = allAgents.find((a) => a.apiKey === headerKey);
   }
 
   if (!targetAgent) {
+    return NextResponse.json({ ok: false, error: "کلید API نامعتبر است (Unauthorized)" }, { status: 401 });
+  }
+
+  const amountUsdt = Number(b.amountUsdt);
+  const txHash = String(b.txHash || "").trim();
+  const title = String(b.title || "").trim();
+
+  if (!Number.isFinite(amountUsdt) || amountUsdt <= 0) {
+    return NextResponse.json({ ok: false, error: "amountUsdt باید عددی بزرگ‌تر از صفر باشد" }, { status: 422 });
+  }
+  if (!txHash || txHash.length < 16) {
     return NextResponse.json(
-      { error: "هیچ ایجنتی یافت نشد" },
-      { status: 404 }
+      { ok: false, error: "هش تراکنش معتبر (txHash) الزامی است — بدون شاهد، درآمد ثبت نمی‌شود" },
+      { status: 422 }
     );
   }
+  if (!title) {
+    return NextResponse.json({ ok: false, error: "title الزامی است" }, { status: 422 });
+  }
 
-  const stratKey = b.strategy || "arbitrage";
-  const strat = cryptoStrategies[stratKey] || cryptoStrategies.arbitrage;
+  const wallet = await getMasterWallet();
+  const network = normalizeNetwork(b.network || wallet.network);
 
-  const amountUsdt =
-    b.amountUsdt !== undefined && Number(b.amountUsdt) > 0
-      ? Number(b.amountUsdt)
-      : Math.round(strat.min + Math.random() * (strat.max - strat.min));
+  const duplicate = await db
+    .select()
+    .from(transactions)
+    .where(and(eq(transactions.txHash, txHash), eq(transactions.kind, "income")))
+    .limit(1);
+  if (duplicate[0]) {
+    return NextResponse.json({
+      ok: true,
+      duplicate: true,
+      status: duplicate[0].status,
+      message: "این هش تراکنش قبلاً ثبت شده است؛ ثبت تکراری انجام نشد.",
+      transaction: duplicate[0],
+    });
+  }
 
-  const title =
-    b.title ||
-    (targetAgent.specialty === "crypto"
-      ? strat.label
-      : `درآمد خودکار از ${targetAgent.name}`);
-
-  const txHash =
-    b.txHash ||
-    `${randomBytes(2).toString("hex")}...${randomBytes(2).toString("hex")}`;
-
-  const newEarned = Number(targetAgent.earnedUsdt || 0) + amountUsdt;
-  const newTasks = Number(targetAgent.tasksCompleted || 0) + 1;
-
-  const [updatedAgent] = await db
-    .update(agents)
-    .set({
-      earnedUsdt: newEarned,
-      tasksCompleted: newTasks,
-    })
-    .where(eq(agents.id, targetAgent.id))
-    .returning();
-
-  const [tx] = await db
-    .insert(transactions)
-    .values({
-      title,
-      projectTitle: targetAgent.role,
+  try {
+    const result = await ingestExternalIncome({
       agentName: targetAgent.name,
-      destinationWallet: masterWallet.address,
+      title,
       amountUsdt,
-      network: masterWallet.network.replace("USDT-", ""),
       txHash,
-      kind: "income",
-      status: "confirmed",
-    })
-    .returning();
+      network,
+      source: "ingest",
+      projectTitle: targetAgent.role,
+    });
 
-  const reportText =
-    b.report ||
-    (targetAgent.specialty === "crypto"
-      ? strat.report(amountUsdt, masterWallet.address)
-      : `✅ ایجنت «${targetAgent.name}» مأموریت «${title}» را تکمیل و مبلغ +${amountUsdt} USDT را به کیف پول واحد (${masterWallet.address}) واریز کرد.`);
+    if (result.status === "confirmed") {
+      return NextResponse.json({
+        ok: true,
+        status: "confirmed",
+        verification: result.verification,
+        transaction: result.recorded.data,
+        message: "واریز روی زنجیره تأیید و به‌عنوان درآمد واقعی ثبت شد.",
+        masterWallet: wallet,
+      });
+    }
 
-  await db.insert(agentLogs).values({
-    agent: targetAgent.name,
-    action: `واریز +${amountUsdt} USDT به کیف پول واحد`,
-    status: "success",
-    detail: `${title} • مقصد: ${masterWallet.address.slice(0, 12)}... • هش: ${txHash}`,
-    durationMs: 420 + Math.round(Math.random() * 600),
-  });
+    const { job, telegram } = await createJob({
+      agentId: targetAgent.id,
+      agentName: targetAgent.name,
+      kind: "confirm_deposit",
+      title: `تأیید واریز ${amountUsdt} USDT — ${title}`,
+      detail: `هش: ${txHash}\nشبکه: ${network}\nدلیل نیاز به تأیید: ${result.verification.reason}`,
+      payload: {
+        transactionId: result.transaction.id,
+        txHash,
+        amountUsdt,
+        network,
+        verifiedOnchain: false,
+      },
+      risk: "medium",
+      requiresApproval: true,
+    });
 
-  return NextResponse.json({
-    ok: true,
-    agent: updatedAgent,
-    transaction: tx,
-    masterWallet,
-    amountUsdt,
-    report: reportText,
-  });
+    const [linked] = await db
+      .update(transactions)
+      .set({ jobId: job.id })
+      .where(eq(transactions.id, result.transaction.id))
+      .returning();
+
+    return NextResponse.json({
+      ok: true,
+      status: "pending_verification",
+      verification: result.verification,
+      transaction: linked ?? result.transaction,
+      job,
+      telegram,
+      message:
+        "واریز ثبت شد اما تا تأیید مدیرعامل در درآمد محقق‌شده حساب نمی‌شود. درخواست تأیید ارسال شد.",
+    });
+  } catch (e: any) {
+    await recordAgentError({
+      agentName: targetAgent.name,
+      action: "خطا در پردازش واریز ورودی",
+      detail: e?.message || String(e),
+      source: "ingest",
+      meta: { txHash, amountUsdt },
+    });
+    return NextResponse.json(
+      { ok: false, error: e?.message || "خطا در ثبت درآمد" },
+      { status: 500 }
+    );
+  }
 }
