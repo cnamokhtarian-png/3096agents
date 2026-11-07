@@ -1,12 +1,14 @@
 {
-  "name": "nextjs-postgresql-template",
+  "name": "agent-company-os",
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "next build && node --experimental-strip-types scripts/coo-startup-once.ts",
     "start": "next start",
     "lint": "eslint .",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "verify:config": "node --experimental-strip-types scripts/verify-config.ts",
+    "verify:admin": "node --experimental-strip-types scripts/verify-admin-password.ts"
   },
   "dependencies": {
     "dotenv": "17.3.1",

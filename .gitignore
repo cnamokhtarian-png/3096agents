@@ -14,6 +14,10 @@ dist/
 .env*.local
 .vercel
 
+# پرونده‌ی دائمی کلیدها — حاوی اسرار واقعی است و هرگز نباید در گیت برود.
+# ساختار آن در config.example.json نگهداری می‌شود.
+config.json
+
 # logs
 *.log
 npm-debug.log*
