@@ -8,7 +8,9 @@
  *  ۲) هر کلید از یکی از سه منبع (env / config.json / .env.local) پیدا می‌شود
  *  ۳) با پاک کردن متغیرهای محیطی، کلیدها همچنان از پرونده‌ی دائمی خوانده می‌شوند
  */
-import { conf, hasConf, configInventory, configFileExists } from "../src/lib/config.ts";
+// این اسکریپت یک ابزار CLI مستقل است و مستقیم ماژول را می‌خواند تا
+// بدون نیاز به alias-resolution اجرا شود.
+import { conf, configInventory, configFileExists } from "../src/lib/config.ts";
 
 const REQUIRED = [
   "DATABASE_URL",
