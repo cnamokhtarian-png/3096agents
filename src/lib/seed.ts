@@ -26,7 +26,11 @@ import {
   shiftPeriod,
   type Outcome,
 } from "@/lib/leaderboard";
-import { TRADER_DEFAULTS, formatSignalMessage } from "@/lib/trader";
+import {
+  TRADER_DEFAULTS,
+  formatSignalMessage,
+  getTraderAgent,
+} from "@/lib/trader";
 
 export const hashPw = (p: string) =>
   createHash("sha256").update(p).digest("hex");
@@ -715,9 +719,9 @@ async function ensureTraderSeed() {
   ];
   await db.insert(settings).values(defaults.map(([key, value]) => ({ key, value }))).onConflictDoNothing();
 
-  const [agent] = await db.select().from(agents).limit(1);
+  const agent = await getTraderAgent();
   const agentId = agent?.id || 1;
-  const agentName = agent?.name || "آریا کریپتو (کارمند تخصصی رمزارز)";
+  const agentName = agent?.name || "آریا (A1)";
   const now = Date.now();
   const day = 24 * 60 * 60 * 1000;
 
@@ -854,8 +858,10 @@ async function ensureTraderSeed() {
         "شکست کانال نزولی ۴ ساعته + واگرایی مثبت در RSI + افزایش حجم خریداران در صرافی.",
       riskNotes: "ریسک حداکثر ۵۰ USDT • سقف پوزیشن ۵۰۰ USDT • اهرم مجاز 5x • R/R ≥ ۱ به ۲",
       status: "pending",
-      expiresAt: new Date(now + 4 * 60 * 60 * 1000),
-      createdAt: new Date(now - 20 * 60 * 1000),
+      // کارت نمونهای فقط ۲۰ دقیقه صف تأیید را نگه میدارد؛ بعد از آن بهصورت
+      // خودکار منقضی شده و اسکن واقعی بازار با دادهٔ زنده جایگزینش میشود.
+      expiresAt: new Date(now + 20 * 60 * 1000),
+      createdAt: new Date(now - 2 * 60 * 1000),
     };
     await db.insert(tradeSignals).values({
       ...draft,

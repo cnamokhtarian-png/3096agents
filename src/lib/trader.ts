@@ -21,7 +21,7 @@ import {
   agentJournal,
   marketSnapshots,
 } from "@/db/schema";
-import { desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, lt, sql } from "drizzle-orm";
 import {
   fetchMarketSnapshot,
   fetchPrice,
@@ -457,6 +457,20 @@ function evaluate(s: MarketSnapshot, cfg: TraderConfig) {
 }
 
 /** اسکن بازار و ساخت پیشنهاد معامله (یا ثبت دلیل صرفنظر کردن). */
+/** پیشنهادهای منقضیشده را بایگانی میکند تا صف تأیید قفل نشود. */
+export async function expireStaleSignals(): Promise<number> {
+  const rows = await db
+    .select()
+    .from(tradeSignals)
+    .where(and(eq(tradeSignals.status, "pending"), lt(tradeSignals.expiresAt, new Date())));
+  if (!rows.length) return 0;
+  await db
+    .update(tradeSignals)
+    .set({ status: "expired", decidedBy: "انقضای خودکار", decidedAt: new Date() })
+    .where(and(eq(tradeSignals.status, "pending"), lt(tradeSignals.expiresAt, new Date())));
+  return rows.length;
+}
+
 export async function scanMarket(opts: { force?: boolean } = {}) {
   const cfg = await getTraderConfig();
   const agent = await getTraderAgent();
@@ -466,6 +480,7 @@ export async function scanMarket(opts: { force?: boolean } = {}) {
     return { ok: false, skipped: true, reason: "ایجنت غیرفعال است" };
   }
 
+  await expireStaleSignals();
   const snapshot = await getSnapshot(cfg.symbol, Boolean(opts.force));
 
   const [pending, open] = await Promise.all([
@@ -843,6 +858,7 @@ export async function emergencyClose(id: number) {
 }
 
 export async function getDeskData() {
+  await expireStaleSignals().catch(() => 0);
   const cfg = await getTraderConfig();
   const agent = await getTraderAgent();
   const sync = await syncPositions().catch(() => ({ checked: 0, closed: 0, results: [] }));
