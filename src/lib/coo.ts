@@ -29,6 +29,7 @@ import { scanBountyFeeds } from "@/lib/bounty";
 import { createJob } from "@/lib/jobs";
 import { escapeHtml, notifyAdmin, telegramConfigured } from "@/lib/telegram";
 import { activeGeminiModel, generateGeminiText, geminiConfigured } from "@/lib/ai";
+import { capOrderSize, getLiveGate } from "@/lib/live-gate";
 
 export const COO_NAME = "RNAI · مدیر ارشد اجرایی (COO)";
 
@@ -457,6 +458,21 @@ export async function runAriaMarketScan(options?: { forceCardIfNonePending?: boo
   );
   const best = setups[0];
 
+  // ── سقف سرمایهٔ خرد: مبلغ پیشنهادی هرگز از سقف سفارش دروازهٔ معامله
+  // بیشتر نمی‌شود؛ حتی اگر درصد ریسک عدد بزرگ‌تری بدهد.
+  const gate = await getLiveGate();
+  if (best.positionUsdt !== null) {
+    const capped = await capOrderSize(best.positionUsdt);
+    if (capped.usdt !== null && capped.usdt < best.positionUsdt) {
+      best.positionUsdt = capped.usdt;
+      best.sizingNote = `${best.sizingNote} • محدود به سقف سرمایهٔ خرد ${gate.maxOrderUsdt} USDT`;
+      best.maxLossUsdt =
+        Math.round(best.positionUsdt * (best.stopPct / 100) * best.leverage * 100) / 100;
+      best.estimatedProfitUsdt =
+        Math.round(best.positionUsdt * (best.targetPct / 100) * best.leverage * 100) / 100;
+    }
+  }
+
   const summaryDetail = setups
     .map(
       (s) =>
@@ -632,19 +648,41 @@ export async function runBountyHunterScan() {
     existingLinks,
   });
 
-  const rejectedCount = scan.verified.filter((v) => v.verdict !== "ok").length;
+  const rejected = scan.verified.filter((v) => v.verdict !== "ok");
+  const rejectedCount = rejected.length;
+  // تفکیک دلایل رد — شفافیت کامل برای مدیرعامل (چرا یک فرصت کنار گذاشته شد)
+  const rejections: Record<string, number> = {};
+  for (const r of rejected) {
+    const key = r.rejection || "other";
+    rejections[key] = (rejections[key] || 0) + 1;
+  }
+  const rejectionLabels: Record<string, string> = {
+    security_gate: "فیشینگ/امنیتی",
+    unrealistic_promise: "وعده غیرواقعی",
+    requires_investment: "نیازمند سرمایه اولیه",
+    not_crypto_reward: "غیررمزارزی",
+    editorial_content: "مقاله/خبر (نه کمپین)",
+    other: "سایر",
+  };
+  const rejectionText = Object.entries(rejections)
+    .map(([k, n]) => `${rejectionLabels[k] || k}: ${n}`)
+    .join(" • ");
 
   await logCooActivity({
     agentId: hunter.id,
     agentName: hunter.name,
-    action: `اسکن و حقیقت‌سنجی ${scan.sourcesChecked.length} منبع بانتی و ایردراپ`,
+    action: `B7 • اسکن ${scan.sourcesChecked.length} منبع پاداش رایگان رمزارزی (BTC/USDT)`,
     status: scan.fetchedCount > 0 ? "info" : "error",
-    detail: `آیتم‌های واکشی‌شده: ${scan.fetchedCount} • ردشده توسط فیلتر ضداسکم: ${rejectedCount} • واجد شرایط تأییدشده: ${scan.qualified.length}${scan.error ? ` • هشدار منبع: ${scan.error}` : ""}`,
+    detail:
+      `آیتم‌های واکشی‌شده: ${scan.fetchedCount} • واجد شرایط (رایگان + رمزارزی + تأییدشده): ${scan.qualified.length}` +
+      (rejectedCount ? ` • ردشده: ${rejectedCount} (${rejectionText})` : "") +
+      (scan.error ? ` • هشدار منبع: ${scan.error}` : ""),
     source: "bounty_engine",
     meta: {
       sourcesChecked: scan.sourcesChecked,
       fetchedCount: scan.fetchedCount,
       rejectedCount,
+      rejections,
       qualifiedCount: scan.qualified.length,
     },
   });
@@ -656,8 +694,14 @@ export async function runBountyHunterScan() {
       agentId: hunter.id,
       agentName: hunter.name,
       kind: "bounty",
-      title: `فرصت بانتی/ایردراپ معتبر — ${candidate.title.slice(0, 88)}`,
-      detail: `${candidate.analysisReason}\nپاداش: ${candidate.rewardLabel} | امتیاز حقیقت‌سنجی: ${candidate.trustScore}/100`,
+      title: `🎁 پاداش رایگان رمزارزی — ${candidate.title.slice(0, 84)}`,
+      detail: [
+        candidate.analysisReason,
+        `دارایی پاداش: ${candidate.cryptoAsset || "رمزارز"}`,
+        `نحوه دریافت: رایگان — بدون سرمایه‌گذاری اولیه`,
+        `شرط برداشت: ${candidate.claimPath || "باید روی صفحه رسمی کمپین بررسی شود"}`,
+        `امتیاز حقیقت‌سنجی ضداسکم: ${candidate.trustScore}/100`,
+      ].join("\n"),
       payload: {
         link: candidate.link,
         rewardLabel: candidate.rewardLabel,
@@ -665,6 +709,9 @@ export async function runBountyHunterScan() {
         estimatedProfitUsdt: candidate.estimatedProfitUsdt,
         estimatedDuration: candidate.estimatedDuration,
         analysisReason: candidate.analysisReason,
+        cryptoAsset: candidate.cryptoAsset,
+        freeToClaim: candidate.freeToClaim !== false,
+        claimPath: candidate.claimPath,
       },
       risk: "low",
       requiresApproval: true,

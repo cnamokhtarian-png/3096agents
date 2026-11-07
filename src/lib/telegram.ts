@@ -200,6 +200,16 @@ export async function sendJobApprovalRequest(job: {
       `• ⏱ <b>زمان تقریبی:</b> ${escapeHtml(String(p.estimatedDuration))}`,
     );
   }
+  // ── جزئیات کارت شکار جایزه رایگان رمزارزی (B7) ───────────────────────
+  if (p.cryptoAsset) {
+    metaLines.push(
+      `• 🪙 <b>دارایی پاداش:</b> <code>${escapeHtml(String(p.cryptoAsset))}</code>` +
+        (p.freeToClaim === false ? "" : " — <b>رایگان (بدون سرمایه اولیه)</b>"),
+    );
+  }
+  if (p.claimPath) {
+    metaLines.push(`• 🎯 <b>نحوه دریافت و شرط برداشت:</b> ${escapeHtml(String(p.claimPath))}`);
+  }
   if (p.trustScore !== undefined) {
     metaLines.push(
       `• 🛡️ <b>امتیاز حقیقت‌سنجی ضداسکم:</b> <code>${escapeHtml(String(p.trustScore))}/100</code>`,

@@ -1,31 +1,45 @@
-# حلقهٔ زندهٔ ناوگان (Fleet Loop) — اجرای چرخهٔ واقعی پس‌زمینه هر ۳۰ دقیقه.
+# حلقهٔ خودکار ۲۴/۷ ناوگان (Autonomous Loop) — اجرای پیوستهٔ چرخهٔ واقعی.
 #
-# چرا GitHub Actions؟ پلن Hobby ورسل اجازهٔ کرون بیش از روزی یک‌بار نمی‌دهد،
-# پس کرون روزانهٔ vercel.json فقط «ضربان پشتیبان» است و حلقهٔ اصلی اینجاست:
-# اسکن واقعی بازار (آریا)، اسکن بانتی، پایش متخصص‌ها، اجرای صف، یادآوری و
-# انقضای تأییدها — دقیقاً همان job=full که کرون ورسل صدا می‌زند.
+# چه کاری می‌کند؟
+#   هر ۱۵ دقیقه `/api/cron/tick?job=loop` را روی Production صدا می‌زند:
+#     ۱) موتورهای زنده (آریا، بانتی‌هانتر، متخصص‌ها) را اسکن می‌کند
+#     ۲) صف تأیید را «همیشه پر» نگه می‌دارد: برای هر کارمند کم‌کارت،
+#        یک مأموریت تازه با کارت [✅]/[❌] در تلگرام می‌سازد
+#     ۳) تصمیم‌های شما از تیک قبل را می‌شمارد و خلاصه را در تلگرام می‌فرستد
+#
+# چرا GitHub Actions؟ پلن Hobby ورسل اجازهٔ کرون بیش از روزی یک‌بار نمی‌دهد؛
+# پس کرون روزانهٔ vercel.json فقط «ضربان پشتیبان» است و حلقهٔ اصلی اینجاست.
 #
 # پیش‌نیاز (یک‌بار): در GitHub → Settings → Secrets and variables → Actions
-# یک سکرت به نام CRON_SECRET بسازید با همان مقداری که در Vercel با نام
-# CRON_SECRET ذخیره شده است. بدون آن، این حلقه 401 می‌گیرد و هیچ کاری نمی‌کند.
-# اجرای دستی هم از تب Actions → Fleet Loop → Run workflow ممکن است.
+# یک سکرت به نام CRON_SECRET با همان مقدار CRON_SECRET در Vercel بسازید.
+# بدون آن این حلقه 401 می‌گیرد و هیچ کاری نمی‌کند.
+#
+# اجرای دستی: تب Actions → «Fleet Loop» → Run workflow
+#   job = loop   → یک تیک حلقهٔ خودکار (پیشنهادی)
+#   job = full   → چرخهٔ کامل قدیمی (موتورها + صف + یادآوری + انقضا)
+#   job = reports→ گزارش روزانه
+#
+# تنظیم فاصله: مقدار cron زیر را تغییر دهید (کمینهٔ عملی گیت‌هاب هر ۵ دقیقه است).
+# خود حلقه هم فاصلهٔ داخلی (intervalMinutes) دارد؛ اگر می‌خواهید موتورها
+# سبک‌تر اجرا شوند، از پنل → «حلقهٔ خودکار ۲۴/۷» گزینهٔ «اجرای موتورها در هر تیک»
+# را خاموش کنید.
 
-name: Fleet Loop (چرخه زنده ناوگان)
+name: Fleet Loop (حلقه خودکار ۲۴/۷)
 
 on:
   schedule:
-    - cron: "*/30 * * * *"
+    - cron: "*/15 * * * *"
   workflow_dispatch:
     inputs:
       job:
-        description: "نوع چرخه (full = چرخه کامل ناوگان)"
+        description: "نوع چرخه"
         required: false
-        default: "full"
+        default: "loop"
         type: choice
         options:
+          - loop
           - full
-          - fleet
-          - market
+          - reports
           - queue
 
 permissions: {}
@@ -36,31 +50,31 @@ concurrency:
 
 jobs:
   tick:
-    name: اجرای چرخهٔ ناوگان روی Production
+    name: اجرای تیک حلقه روی Production
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 12
     steps:
-      - name: تحریک چرخهٔ واقعی ناوگان
+      - name: تحریک چرخهٔ واقعی
         env:
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
           APP_URL: https://freelance-agent-os.vercel.app
-          JOB: ${{ inputs.job || 'full' }}
+          JOB: ${{ inputs.job || 'loop' }}
         run: |
           if [ -z "$CRON_SECRET" ]; then
-            echo "::error::سکرت CRON_SECRET در GitHub Secrets تنظیم نشده است؛ حلقهٔ ناوگان غیرفعال می‌ماند. راهنما: بالای همین فایل."
+            echo "::error::سکرت CRON_SECRET در GitHub Secrets تنظیم نشده است؛ حلقهٔ خودکار غیرفعال می‌ماند. راهنما: بالای همین فایل."
             exit 1
           fi
-          echo "Triggering fleet cycle (job=$JOB) on $APP_URL ..."
-          HTTP_CODE=$(curl -sS -m 240 -o /tmp/fleet-resp.json -w "%{http_code}" \
+          echo "Triggering autonomous loop (job=$JOB) on $APP_URL ..."
+          HTTP_CODE=$(curl -sS -m 280 -o /tmp/loop-resp.json -w "%{http_code}" \
             -X POST "$APP_URL/api/cron/tick" \
             -H "Authorization: Bearer $CRON_SECRET" \
             -H "Content-Type: application/json" \
             -d "{\"job\":\"$JOB\"}")
           echo "HTTP $HTTP_CODE"
-          cat /tmp/fleet-resp.json
+          cat /tmp/loop-resp.json
           echo
-          if [ "$HTTP_CODE" != "200" ] || ! grep -q '"ok":true' /tmp/fleet-resp.json; then
-            echo "::error::چرخهٔ ناوگان موفق نبود (HTTP $HTTP_CODE)."
+          if [ "$HTTP_CODE" != "200" ] || ! grep -q '"ok":true' /tmp/loop-resp.json; then
+            echo "::error::حلقهٔ خودکار موفق نبود (HTTP $HTTP_CODE)."
             exit 1
           fi
-          echo "Fleet cycle completed successfully."
+          echo "Autonomous loop tick completed successfully."

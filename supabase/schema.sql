@@ -234,8 +234,63 @@ ALTER TABLE agentos.market_snapshots ADD COLUMN IF NOT EXISTS change_pct NUMERIC
 ALTER TABLE agentos.market_snapshots ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'binance';
 ALTER TABLE agentos.market_snapshots ADD COLUMN IF NOT EXISTS fetched_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
 
+-- ستون‌های تکنیکال (RSI/MACD/MA/حمایت/مقاومت/نوسان). اگر این‌ها نباشند،
+-- ثبت اسنپ‌شات آریا و خواندن وضعیت بازار با خطای «column does not exist»
+-- شکست می‌خورد و حلقهٔ خودکار بی‌دلیل خطا می‌دهد. این بلوک idempotent است.
+ALTER TABLE agentos.market_snapshots ADD COLUMN IF NOT EXISTS rsi REAL NOT NULL DEFAULT 0;
+ALTER TABLE agentos.market_snapshots ADD COLUMN IF NOT EXISTS macd_hist REAL NOT NULL DEFAULT 0;
+ALTER TABLE agentos.market_snapshots ADD COLUMN IF NOT EXISTS ma20 REAL NOT NULL DEFAULT 0;
+ALTER TABLE agentos.market_snapshots ADD COLUMN IF NOT EXISTS ma50 REAL NOT NULL DEFAULT 0;
+ALTER TABLE agentos.market_snapshots ADD COLUMN IF NOT EXISTS support REAL NOT NULL DEFAULT 0;
+ALTER TABLE agentos.market_snapshots ADD COLUMN IF NOT EXISTS resistance REAL NOT NULL DEFAULT 0;
+ALTER TABLE agentos.market_snapshots ADD COLUMN IF NOT EXISTS volume_usdt REAL NOT NULL DEFAULT 0;
+ALTER TABLE agentos.market_snapshots ADD COLUMN IF NOT EXISTS volatility_pct REAL NOT NULL DEFAULT 0;
+ALTER TABLE agentos.market_snapshots ADD COLUMN IF NOT EXISTS candles INTEGER NOT NULL DEFAULT 0;
+
 CREATE INDEX IF NOT EXISTS market_snapshots_symbol_idx
   ON agentos.market_snapshots (symbol, fetched_at DESC);
+
+-- -------------------------------------------------------------------------
+-- ۵.۱) سیگنال‌های معاملهٔ آریا (trade_signals)
+-- این جدول پیش‌تر در فایل اسکیما نبود و روی دیتابیس تازه ساخته نمی‌شد؛
+-- نتیجه: چرخهٔ آریا و حلقهٔ خودکار با خطای «relation does not exist»
+-- شکست می‌خوردند. اکنون به‌صورت idempotent ساخته می‌شود.
+-- -------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS agentos.trade_signals (
+  id SERIAL PRIMARY KEY,
+  agent_id INTEGER NOT NULL,
+  agent_name TEXT NOT NULL,
+  symbol TEXT NOT NULL DEFAULT 'BTCUSDT',
+  side TEXT NOT NULL,
+  entry_price REAL NOT NULL,
+  take_profit REAL NOT NULL,
+  stop_loss REAL NOT NULL,
+  target_pct REAL NOT NULL DEFAULT 0,
+  stop_pct REAL NOT NULL DEFAULT 0,
+  risk_reward REAL NOT NULL DEFAULT 0,
+  leverage INTEGER NOT NULL DEFAULT 2,
+  position_usdt REAL NOT NULL DEFAULT 50,
+  estimated_profit_usdt REAL NOT NULL DEFAULT 0,
+  estimated_hours_min INTEGER NOT NULL DEFAULT 4,
+  estimated_hours_max INTEGER NOT NULL DEFAULT 12,
+  confidence REAL NOT NULL DEFAULT 0,
+  rsi REAL NOT NULL DEFAULT 0,
+  macd_hist REAL NOT NULL DEFAULT 0,
+  ma20 REAL NOT NULL DEFAULT 0,
+  ma50 REAL NOT NULL DEFAULT 0,
+  support REAL NOT NULL DEFAULT 0,
+  resistance REAL NOT NULL DEFAULT 0,
+  volatility_pct REAL NOT NULL DEFAULT 0,
+  data_source TEXT NOT NULL DEFAULT 'binance',
+  analysis_reason TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'pending',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS trade_signals_created_idx
+  ON agentos.trade_signals (created_at DESC);
+CREATE INDEX IF NOT EXISTS trade_signals_symbol_idx
+  ON agentos.trade_signals (symbol, created_at DESC);
 
 -- -------------------------------------------------------------------------
 -- ۶) وبهوک تلگرام (بدون تکرار) + اجرای کرون + رویدادهای سیستم/خطا
@@ -354,6 +409,165 @@ CREATE UNIQUE INDEX IF NOT EXISTS transactions_income_txhash_uidx
   WHERE kind = 'income' AND tx_hash <> '';
 
 -- -------------------------------------------------------------------------
+-- ۷.۵) کتابخانهٔ مالی داخلی + لایهٔ پاداش (Ledger & Reward Layer)
+--      دفتر دوطرفه برای سرمایهٔ اولیه، سود/زیان معاملات، پاداش کارمندان و
+--      سود مرکب. هیچ موجودی‌ای ذخیره نمی‌شود؛ همیشه از SUM محاسبه می‌شود.
+-- -------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS agentos.ledger_accounts (
+  id SERIAL PRIMARY KEY,
+  code TEXT NOT NULL UNIQUE,             -- capital | exchange | wallet | rewards | profit | fees | profit_share
+  name TEXT NOT NULL,
+  kind TEXT NOT NULL DEFAULT 'asset',    -- asset | equity | revenue | expense
+  asset TEXT NOT NULL DEFAULT 'USDT',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS agentos.ledger_entries (
+  id BIGSERIAL PRIMARY KEY,
+  entry_group TEXT NOT NULL,
+  account_code TEXT NOT NULL,
+  agent_id INTEGER,
+  agent_name TEXT NOT NULL DEFAULT '',
+  debit_usdt REAL NOT NULL DEFAULT 0,
+  credit_usdt REAL NOT NULL DEFAULT 0,
+  kind TEXT NOT NULL,                    -- capital_in | revenue | trade_pnl | reward | withdraw | fee | profit_share | adjustment
+  memo TEXT NOT NULL DEFAULT '',
+  ref_type TEXT NOT NULL DEFAULT '',     -- transaction | exchange_order | job | manual
+  ref_id TEXT NOT NULL DEFAULT '',
+  idempotency_key TEXT NOT NULL UNIQUE,  -- ضدتکرار: هر رویداد فقط یک‌بار
+  meta JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS ledger_entries_account_idx
+  ON agentos.ledger_entries (account_code, created_at DESC);
+CREATE INDEX IF NOT EXISTS ledger_entries_group_idx
+  ON agentos.ledger_entries (entry_group);
+
+CREATE TABLE IF NOT EXISTS agentos.reward_rules (
+  id SERIAL PRIMARY KEY,
+  key TEXT NOT NULL UNIQUE,
+  value TEXT NOT NULL DEFAULT '',
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS agentos.agent_rewards (
+  id BIGSERIAL PRIMARY KEY,
+  agent_id INTEGER,
+  agent_name TEXT NOT NULL,
+  source TEXT NOT NULL DEFAULT 'trade',  -- trade | bounty | mission | revenue
+  job_id INTEGER,
+  trade_profit_usdt REAL NOT NULL DEFAULT 0,
+  rule_key TEXT NOT NULL DEFAULT 'default',
+  reward_usdt REAL NOT NULL DEFAULT 0,
+  points INTEGER NOT NULL DEFAULT 0,
+  compounded BOOLEAN NOT NULL DEFAULT FALSE,
+  ledger_group TEXT NOT NULL DEFAULT '',
+  idempotency_key TEXT NOT NULL UNIQUE,
+  detail TEXT NOT NULL DEFAULT '',
+  meta JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS agent_rewards_agent_idx
+  ON agentos.agent_rewards (agent_name, created_at DESC);
+
+-- حساب‌های پایهٔ دفتر (idempotent)
+INSERT INTO agentos.ledger_accounts (code, name, kind) VALUES
+  ('capital',      'سرمایهٔ مالک (موجودی اولیهٔ خرد)', 'equity'),
+  ('exchange',     'موجودی در صرافی',                  'asset'),
+  ('wallet',       'کیف پول واحد USDT',                'asset'),
+  ('rewards',      'صندوق پاداش کارمندان',             'asset'),
+  ('profit',       'سود محقق‌شدهٔ معاملات',            'revenue'),
+  ('fees',         'کارمزد صرافی',                     'expense'),
+  ('profit_share', 'سهم کارمند از سود (پاداش مرکب)',   'expense')
+ON CONFLICT (code) DO NOTHING;
+
+-- ── توابع اتمیک دفتر ─────────────────────────────────────────────────────
+
+-- ثبت یک سند دوطرفه با کنترل تراز و ضدتکرار. اگر کلید قبلاً ثبت شده باشد
+-- FALSE برمی‌گرداند (یعنی تغییری اعمال نشد).
+CREATE OR REPLACE FUNCTION agentos.post_ledger_entry(
+  p_group TEXT,
+  p_kind TEXT,
+  p_idempotency_key TEXT,
+  p_legs JSONB,                     -- [{"account":"wallet","amount":50}, ...]
+  p_memo TEXT DEFAULT '',
+  p_ref_type TEXT DEFAULT '',
+  p_ref_id TEXT DEFAULT '',
+  p_meta JSONB DEFAULT '{}'::jsonb
+)
+RETURNS BOOLEAN
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  leg JSONB;
+  debit_total NUMERIC := 0;
+  credit_total NUMERIC := 0;
+  idx INT := 0;
+BEGIN
+  IF EXISTS (SELECT 1 FROM agentos.ledger_entries WHERE idempotency_key = p_idempotency_key || ':0') THEN
+    RETURN FALSE;
+  END IF;
+
+  FOR leg IN SELECT * FROM jsonb_array_elements(p_legs) LOOP
+    IF (leg->>'amount')::NUMERIC > 0 THEN
+      debit_total := debit_total + (leg->>'amount')::NUMERIC;
+    ELSE
+      credit_total := credit_total - (leg->>'amount')::NUMERIC;
+    END IF;
+  END LOOP;
+
+  IF ABS(debit_total - credit_total) > 0.000001 THEN
+    RAISE EXCEPTION 'سند مالی متوازن نیست (بدهکار % ≠ بستانکار %)', debit_total, credit_total;
+  END IF;
+
+  FOR leg IN SELECT * FROM jsonb_array_elements(p_legs) LOOP
+    INSERT INTO agentos.ledger_entries
+      (entry_group, account_code, agent_id, agent_name, debit_usdt, credit_usdt,
+       kind, memo, ref_type, ref_id, idempotency_key, meta)
+    VALUES (
+      p_group,
+      leg->>'account',
+      NULLIF(leg->>'agent_id','')::INTEGER,
+      COALESCE(leg->>'agent_name',''),
+      GREATEST((leg->>'amount')::REAL, 0),
+      GREATEST(-1 * (leg->>'amount')::REAL, 0),
+      p_kind, p_memo, p_ref_type, p_ref_id,
+      p_idempotency_key || ':' || idx,
+      p_meta
+    );
+    idx := idx + 1;
+  END LOOP;
+
+  RETURN TRUE;
+END;
+$$;
+
+-- موجودی خالص یک حساب (بدهکار − بستانکار)
+CREATE OR REPLACE FUNCTION agentos.ledger_balance(p_account TEXT)
+RETURNS NUMERIC
+LANGUAGE sql
+STABLE
+AS $$
+  SELECT COALESCE(SUM(debit_usdt - credit_usdt), 0)
+    FROM agentos.ledger_entries
+   WHERE account_code = p_account;
+$$;
+
+-- کنترل یکپارچگی: مجموع کل دفتر باید صفر باشد (دفتر دوطرفه سالم)
+CREATE OR REPLACE FUNCTION agentos.ledger_integrity()
+RETURNS TABLE (total_debit NUMERIC, total_credit NUMERIC, balanced BOOLEAN)
+LANGUAGE sql
+STABLE
+AS $$
+  SELECT COALESCE(SUM(debit_usdt),0),
+         COALESCE(SUM(credit_usdt),0),
+         COALESCE(SUM(debit_usdt),0) = COALESCE(SUM(credit_usdt),0)
+    FROM agentos.ledger_entries;
+$$;
+
+-- -------------------------------------------------------------------------
 -- ۸) دسترسی رول محدود (فقط اگر رول وجود داشته باشد)
 -- -------------------------------------------------------------------------
 DO $$
@@ -366,6 +580,8 @@ BEGIN
     EXECUTE 'ALTER DEFAULT PRIVILEGES IN SCHEMA agentos GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO agentos';
     EXECUTE 'ALTER DEFAULT PRIVILEGES IN SCHEMA agentos GRANT USAGE, SELECT ON SEQUENCES TO agentos';
     EXECUTE 'ALTER DEFAULT PRIVILEGES IN SCHEMA agentos GRANT EXECUTE ON FUNCTIONS TO agentos';
+    EXECUTE 'GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA agentos TO agentos';
+    EXECUTE 'ALTER DEFAULT PRIVILEGES IN SCHEMA agentos GRANT USAGE, SELECT ON SEQUENCES TO agentos';
   END IF;
 END
 $$;

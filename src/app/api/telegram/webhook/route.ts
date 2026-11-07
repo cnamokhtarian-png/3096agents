@@ -35,6 +35,13 @@ import {
   generateCooExecutiveReport,
   runFleetCycle,
 } from "@/lib/coo";
+import {
+  getLoopState,
+  getQueueSnapshot,
+  runAutonomousLoop,
+  setLoopConfig,
+  toggleLoop,
+} from "@/lib/autoloop";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -102,10 +109,15 @@ async function handleAdminCommand(text: string, chatId: string | number) {
         "<b>🏛️ مرکز فرماندهی RNAI (COO) — Agent Company OS</b>",
         "دستورهای اجرایی مدیرعامل:",
         "• /coo — گزارش جامع شرکت، لیدربورد، کارمند برتر و موانع",
+        "• /loop — وضعیت حلقهٔ خودکار ۲۴/۷ (صف، مأموریت‌های تازه، تیک بعدی)",
+        "• /tick — اجرای فوری یک تیک کامل حلقه (ساخت مأموریت تازه + گزارش)",
+        "• /loop on | off — روشن/خاموش کردن حلقهٔ خودکار",
+        "• /loop 10 — تغییر فاصلهٔ حلقه به ۱۰ دقیقه",
+        "• /queue — صف تأیید به تفکیک هر کارمند و جایگاه خالی",
         "• /scan — اجرای فوری چرخه اسکن آریا، بانتی‌هانتر و ایجنت‌ها",
         "• /startup — ابلاغ مجدد شرح وظایف و استارت‌آپ کل ناوگان",
         "• /status — وضعیت خلاصه ناوگان",
-        "• /jobs — کارت‌های پیشنهاد منتظر تأیید [✅]/[❌]",
+        "• /jobs — کارت‌های پیشنهاد منتظر تأیید [✅]/[❌] (یا /jobs all برای همه)",
         "• /report — گزارش تکی کارمندان",
         "• /id — نمایش چت‌آیدی شما",
         "• /webhook — وضعیت وبهوک تلگرام",
@@ -119,6 +131,92 @@ async function handleAdminCommand(text: string, chatId: string | number) {
   if (cmd === "/coo" || cmd === "/leaderboard") {
     const res = await generateCooExecutiveReport({ sendTelegram: false });
     await sendTelegramMessage(chatId, res.summary.telegramHtml);
+    return true;
+  }
+
+  // ── حلقهٔ خودکار ۲۴/۷ ────────────────────────────────────────────
+  if (cmd === "/loop" || cmd === "/tick") {
+    const arg = text.trim().split(/\s+/)[1]?.toLowerCase() || "";
+
+    if (cmd === "/tick" || arg === "tick") {
+      await sendTelegramMessage(
+        chatId,
+        "♾️ <b>RNAI (COO):</b> در حال اجرای یک تیک کامل حلقهٔ خودکار — اسکن موتورها، پر کردن صف تأیید و آماده‌سازی مأموریت تازه…",
+      );
+      const result = await runAutonomousLoop({ source: "telegram", forceDigest: false });
+      await sendTelegramMessage(
+        chatId,
+        `✅ <b>تیک حلقه تکمیل شد</b> (${result.durationMs}ms)\n` +
+          `• کارت تازه: <b>${result.missions.created}</b>\n` +
+          `• صف تأیید: ${result.queueBefore.pendingTotal} → <b>${result.queueAfter.pendingTotal}</b> (هدف ${result.state.targetPendingTotal})\n` +
+          `• فاصلهٔ تیک بعدی: ${result.state.intervalMinutes} دقیقه`,
+      );
+      return true;
+    }
+
+    if (arg === "on" || arg === "off") {
+      const state = await toggleLoop(arg === "on", `telegram:${chatId}`);
+      await sendTelegramMessage(
+        chatId,
+        arg === "on"
+          ? `▶️ <b>حلقهٔ خودکار ۲۴/۷ فعال شد.</b>\nصف تأیید همیشه پر می‌ماند؛ هر ${state.intervalMinutes} دقیقه یک تیک اجرا می‌شود.`
+          : "⏸ <b>حلقهٔ خودکار متوقف شد.</b> برای فعال‌سازی: /loop on",
+      );
+      return true;
+    }
+
+    if (arg && /^\d+$/.test(arg)) {
+      const minutes = Math.max(1, Math.min(240, Number(arg)));
+      await setLoopConfig({ intervalMinutes: minutes });
+      await toggleLoop(true, `telegram:${chatId}`);
+      await sendTelegramMessage(
+        chatId,
+        `⏱ فاصلهٔ حلقهٔ خودکار روی <b>${minutes} دقیقه</b> تنظیم و حلقه فعال شد.`,
+      );
+      return true;
+    }
+
+    const [state, queue] = await Promise.all([getLoopState(), getQueueSnapshot()]);
+    await sendTelegramMessage(
+      chatId,
+      [
+        `♾️ <b>حلقهٔ خودکار ۲۴/۷ — ${state.enabled ? "فعال ✅" : "متوقف ⏸"}</b>`,
+        `فاصله: ${state.intervalMinutes} دقیقه • هدف صف: ${state.targetPendingTotal} کارت • سقف هر کارمند: ${state.maxPendingPerAgent}`,
+        `آخرین تیک: ${state.lastTickAt ? new Date(state.lastTickAt).toLocaleString("fa-IR") : "هنوز اجرا نشده"} • منبع: <code>${escapeHtml(state.lastTickSource || "—")}</code>`,
+        `تیک بعدی (تقریبی): ${state.nextTickAt ? new Date(state.nextTickAt).toLocaleString("fa-IR") : "—"}`,
+        "",
+        `📥 <b>صف تأیید الان:</b> ${queue.pendingTotal} از ${queue.targetPendingTotal} کارت`,
+        ...queue.byAgent.map(
+          (a) =>
+            `${a.needsCard ? "🟡" : "🟢"} ${escapeHtml(a.name)} — ${a.pending} از ${queue.maxPerAgent} کارت${a.needsCard ? " (جایگاه خالی)" : ""}`,
+        ),
+        "",
+        `📊 آمار تجمعی: ${state.totals.ticks} تیک • ${state.totals.cardsCreated} مأموریت ساخته‌شده • ${state.totals.cardsApproved} تأیید • ${state.totals.cardsRejected} رد`,
+        "",
+        "دستورها: /tick (اجرای فوری) • /loop on • /loop off • /loop 10",
+      ].join("\n"),
+    );
+    return true;
+  }
+
+  if (cmd === "/queue") {
+    const queue = await getQueueSnapshot();
+    const empty = queue.byAgent.filter((a) => a.needsCard);
+    await sendTelegramMessage(
+      chatId,
+      [
+        `🗂 <b>صف تأیید: ${queue.pendingTotal} / ${queue.targetPendingTotal} کارت</b>`,
+        "",
+        ...queue.byAgent.map(
+          (a) =>
+            `${a.needsCard ? "🟡 جایگاه خالی" : "🟢 پر"} — <b>${escapeHtml(a.name)}</b> (${a.pending} از ${queue.maxPerAgent} کارت)`,
+        ),
+        "",
+        empty.length
+          ? `⏳ ${empty.length} کارمند جایگاه خالی دارند؛ تیک بعدی حلقه آن را پر می‌کند (یا همین حالا /tick).`
+          : "✅ همهٔ جایگاه‌ها پر است.",
+      ].join("\n"),
+    );
     return true;
   }
 
@@ -186,7 +284,10 @@ async function handleAdminCommand(text: string, chatId: string | number) {
       .from(agentJobs)
       .orderBy(desc(agentJobs.createdAt))
       .limit(20);
-    const pending = rows.filter((j) => j.status === "awaiting_approval");
+    const wantsAll = /\ball\b/i.test(text);
+    const pending = wantsAll
+      ? rows.filter((j) => ["awaiting_approval", "queued", "running", "needs_config"].includes(j.status))
+      : rows.filter((j) => j.status === "awaiting_approval");
     await sendTelegramMessage(
       chatId,
       pending.length

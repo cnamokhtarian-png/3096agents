@@ -23,7 +23,11 @@ import {
   escapeHtml,
 } from "@/lib/telegram";
 import { buildAgentFacts } from "@/lib/report";
+import { gatherMissionFacts, type MissionAgent } from "@/lib/missions";
+import { generateGeminiText, geminiConfigured } from "@/lib/ai";
 import { conf } from "@/lib/config";
+import { checkLiveGate } from "@/lib/live-gate";
+import { recordConfirmedIncomeInLedger, settleTradeOrder } from "@/lib/ledger";
 import {
   approvalVerdict,
   preflightJobKind,
@@ -185,6 +189,37 @@ export async function createJob(input: CreateJobInput) {
   return { job, telegram };
 }
 
+/**
+ * چرخهٔ خودکار ۲۴/۷ — جایگزینی پویا (Dynamic Task Replenishment).
+ *
+ * به‌محض اینکه مدیرعامل یک کارت را تأیید یا رد می‌کند، جایگاه خالی آن
+ * کارت باید بلافاصله با مأموریت تازهٔ همان کارمند پر شود. این تابع
+ * بی‌صدا صدا زده می‌شود: هیچ خطایی در آن نباید نتیجهٔ تأیید را خراب کند.
+ *
+ * import داینامیک است تا وابستگی حلقهٔ خودکار و این فایل چرخهٔ ماژولی نسازد.
+ */
+async function triggerReplenish(agentId: number | null | undefined, reason: string) {
+  if (!agentId) return;
+  try {
+    const loop = await import("@/lib/autoloop");
+    await loop.replenishForAgent(agentId, reason);
+  } catch {
+    // خطای جایگزینی هرگز نباید تأیید/رد مدیرعامل را تحت تأثیر بگذارد
+  }
+}
+
+async function triggerDecisionStat(
+  kind: "approved" | "rejected",
+  jobKind?: string,
+) {
+  try {
+    const loop = await import("@/lib/autoloop");
+    await loop.recordDecision(kind, { mission: jobKind === "mission" });
+  } catch {
+    // آمار حلقه حیاتی نیست
+  }
+}
+
 export async function getJob(id: number) {
   const rows = await db.select().from(agentJobs).where(eq(agentJobs.id, id)).limit(1);
   return rows[0] ?? null;
@@ -233,6 +268,8 @@ export async function rejectJob(id: number, actor: string, reason = "") {
     meta: { actor },
   });
   await legacyLog(job.agentName, "رد کار توسط مدیرعامل", "skipped", job.title);
+  await triggerDecisionStat("rejected", job.kind);
+  await triggerReplenish(job.agentId, `rejected:job#${job.id}`);
   return { ok: true as const, job };
 }
 
@@ -301,6 +338,8 @@ export async function approveJob(id: number, actor: string) {
 
   const execution = await executeJob(claimed, actor);
   await syncTelegramApproval(claimed, execution);
+  await triggerDecisionStat("approved", claimed.kind);
+  await triggerReplenish(claimed.agentId, `approved:job#${claimed.id}`);
   return { ok: execution.ok, job: (await getJob(id))!, execution };
 }
 
@@ -355,6 +394,19 @@ async function executeTrade(job: JobRecord, _actor: string): Promise<ExecutionRe
   const side = String(p.side || "BUY").toUpperCase() as "BUY" | "SELL";
   if (!symbol) return markFailed(job, "نماد معاملاتی در Payload مشخص نشده است", "invalid_payload");
 
+  // ── دروازهٔ معاملهٔ واقعی (سقف خرد، سرمایهٔ ثبت‌شده، kill-switch) ──
+  // این بررسی پیش از تماس با صرافی انجام می‌شود؛ اگر برقرار نباشد هیچ
+  // درخواستی به صرافی نمی‌رود (به‌جای اینکه با خطای مبهم برگردد).
+  const intendedUsdt = p.quoteOrderQty ? Number(p.quoteOrderQty) : undefined;
+  const gate = await checkLiveGate(intendedUsdt);
+  if (!gate.allowed) {
+    return markNeedsConfig(
+      job,
+      `دروازهٔ معاملهٔ واقعی اجازه نمی‌دهد: ${gate.message}`,
+      "live_gate_blocked",
+    );
+  }
+
   try {
     const order = await placeRealOrder({
       symbol,
@@ -398,6 +450,31 @@ async function executeTrade(job: JobRecord, _actor: string): Promise<ExecutionRe
       "success",
       `orderId=${order.orderId} status=${order.status}`
     );
+
+    // ── دفتر کل + لایهٔ پاداش: سود/زیان واقعی از سفارش فروش محاسبه
+    // می‌شود و پاداش/امتیاز همان لحظه برای کارمند ثبت می‌گردد.
+    let settlement: Record<string, unknown> | null = null;
+    try {
+      const [saved] = await db
+        .select()
+        .from(exchangeOrders)
+        .where(eq(exchangeOrders.clientOrderId, order.clientOrderId))
+        .limit(1);
+      if (saved) {
+        const settled = await settleTradeOrder(saved.id);
+        settlement = settled as unknown as Record<string, unknown>;
+      }
+    } catch (e: any) {
+      await db
+        .insert(systemEvents)
+        .values({
+          level: "warn",
+          scope: "ledger",
+          message: `تسویهٔ دفتری سفارش ${order.clientOrderId} ناموفق بود: ${e?.message || e}`,
+          meta: { jobId: job.id, symbol },
+        })
+        .catch(() => {});
+    }
 
     // اگر سود محقق‌شده با شاهد تراکنش همراه باشد، همان جریان تأیید واقعی طی می‌شود
     let profit: Record<string, unknown> | null = null;
@@ -443,6 +520,7 @@ async function executeTrade(job: JobRecord, _actor: string): Promise<ExecutionRe
       ok: true,
       result: {
         order,
+        settlement,
         profit,
         note:
           "سفارش واقعاً به صرافی ارسال شد. سود/زیان فقط با شاهد واریز (هش تراکنش) در درآمد ثبت می‌شود.",
@@ -477,11 +555,29 @@ async function executeConfirmDeposit(job: JobRecord, actor: string): Promise<Exe
   });
   if (!res.ok) return markFailed(job, res.error || "تأیید واریز ناموفق بود", "confirm_failed");
 
+  // ثبت موازی در کتابخانهٔ مالی داخلی (کیف پول واحد ↑ / درآمد ↓)
+  let ledger: Record<string, unknown> | null = null;
+  if (res.transaction) {
+    try {
+      const posted = await recordConfirmedIncomeInLedger({
+        id: res.transaction.id,
+        title: res.transaction.title,
+        amountUsdt: Number(res.transaction.amountUsdt),
+        txHash: res.transaction.txHash,
+        agentName: res.transaction.agentName,
+      });
+      ledger = posted as unknown as Record<string, unknown>;
+    } catch (e: any) {
+      ledger = { ok: false, error: e?.message || String(e) };
+    }
+  }
+
   return {
     ok: true,
     result: {
       transaction: res.transaction,
       duplicate: res.duplicate ?? false,
+      ledger,
       note: "واریز تأیید و در دفتر درآمد واقعی ثبت شد.",
     },
   };
@@ -609,6 +705,150 @@ async function executeWithdraw(job: JobRecord): Promise<ExecutionResult> {
   return { ok: true, result: { txHash, amount } };
 }
 
+/**
+ * اجرای یک «مأموریت» ساخته‌شده توسط حلقهٔ خودکار ۲۴/۷.
+ *
+ * مأموریت یعنی کار داخلی واقعی (تحلیل، تدوین، بازرسی) — نه تراکنش مالی.
+ * خروجی این اجرا:
+ *   • یک «برگهٔ تحویل» ساختاریافته بر پایهٔ دادهٔ واقعی همان لحظهٔ دیتابیس
+ *   • در صورت وجود کلید جمینای، متن تحلیلی نوشته‌شده روی همان واقعیت‌ها
+ *   • ثبت در دفتر کارمند + ارسال خلاصه در تلگرام مدیرعامل
+ * هیچ عدد درآمدی یا سود تازه‌ای در این مسیر ساخته نمی‌شود.
+ */
+async function executeMission(job: JobRecord, actor: string): Promise<ExecutionResult> {
+  const p = (job.payload || {}) as Record<string, any>;
+  const rows = await db.select().from(agents).where(eq(agents.id, job.agentId ?? -1)).limit(1);
+  const agent = rows[0];
+  if (!agent) return markFailed(job, "کارمند این مأموریت پیدا نشد", "invalid_payload");
+
+  const missionAgent: MissionAgent = {
+    id: agent.id,
+    name: agent.name,
+    slug: agent.slug,
+    department: agent.department,
+    specialty: agent.specialty,
+    status: agent.status,
+    goalTitle: agent.goalTitle,
+    goalTargetUsdt: Number(agent.goalTargetUsdt || 0),
+    earnedUsdt: Number(agent.earnedUsdt || 0),
+    tasksCompleted: Number(agent.tasksCompleted || 0),
+    currentFocus: agent.currentFocus,
+  };
+
+  const facts = await gatherMissionFacts(missionAgent);
+  const deliverable = String(p.deliverable || job.title);
+  const steps: string[] = Array.isArray(p.steps) ? p.steps.map((s: any) => String(s)) : [];
+
+  const factsBlock = [
+    `دپارتمان: ${facts.agent.department}`,
+    `هدف ماهانه: ${facts.agent.monthlyTargetUsdt} USDT • درآمد تأییدشده: ${facts.agent.earnedUsdt} USDT`,
+    `کارت‌های منتظر تأیید این کارمند: ${facts.queue.pending} • کل شرکت: ${facts.queue.pendingTotal}`,
+    `پروژه‌های باز: ${facts.projects.open} (منطبق: ${facts.projects.matching.length})`,
+    `پیام خوانده‌نشده: ${facts.messages.unread} • واریز منتظر تأیید: ${facts.deposits.pendingVerification}`,
+    `بازار: ${
+      facts.market.available
+        ? facts.market.latest
+            .map((m) => `${m.symbol}=${m.price} (RSI ${m.rsi.toFixed(1)})`)
+            .join(" | ")
+        : "اسنپ‌شات موجود نیست"
+    }`,
+    `سیگنال ۲۴ ساعت اخیر: ${facts.signals.last24h} (آخرین نماد: ${facts.signals.lastSymbol || "—"})`,
+    `سرویس‌ها: تلگرام=${facts.services.telegram ? "متصل" : "قطع"} • AI=${facts.services.ai ? "متصل" : "قطع"} • ورکر=${facts.services.worker ? "متصل" : "قطع"} • کلید صرافی=${facts.services.exchangeKeys ? "ست‌شده" : "نشده"} • قفل معامله=${facts.services.tradingEnabled ? "باز" : "قفل"}`,
+  ].join("\n");
+
+  let analysis = "";
+  let analysisModel: string | null = null;
+  if (geminiConfigured()) {
+    const ai = await generateGeminiText(
+      `تو «${agent.name}» هستی، کارمند دپارتمان «${facts.agent.department}» در شرکت RNAI. ` +
+        `مأموریت تأییدشدهٔ مدیرعامل: «${job.title}». خروجی مورد انتظار: «${deliverable}».\n` +
+        `فقط بر پایهٔ این واقعیت‌های دیتابیس (هیچ عددی از خودت نساز):\n${factsBlock}\n` +
+        `یک برگهٔ تحویل حرفه‌ای فارسی بنویس با این بخش‌ها: ۱) خلاصهٔ مدیریتی (۲ خط) ۲) یافته‌های کلیدی بر پایهٔ همین اعداد ۳) سه اقدام پیشنهادی با اولویت ۴) ریسک‌ها و وابستگی‌ها. بدون markdown و بدون مقدمه.`,
+      { maxOutputTokens: 900, temperature: 0.3, timeoutMs: 22000 },
+    );
+    if (ai.ok) {
+      analysis = ai.text.trim();
+      analysisModel = ai.model;
+    }
+  }
+
+  const sheet = [
+    `📋 برگهٔ تحویل مأموریت #${job.id}`,
+    `👤 کارمند: ${agent.name} (${facts.agent.department})`,
+    `🎯 مأموریت: ${job.title}`,
+    `📦 خروجی: ${deliverable}`,
+    "",
+    "🧾 واقعیت‌های مبنا (ثبت‌شده در دیتابیس):",
+    factsBlock,
+    "",
+    steps.length ? `🧭 گام‌های اجراشده: ${steps.map((s, i) => `${i + 1}) ${s}`).join(" • ")}` : "",
+    analysis
+      ? `🧠 تحلیل تحویل‌شده (${analysisModel}):\n${analysis}`
+      : "🧠 تحلیل متنی تولید نشد (GEMINI_API_KEY ست نشده)؛ برگهٔ تحویل فقط بر پایهٔ دادهٔ واقعی ثبت شد.",
+    "",
+    `✅ تأییدکننده: ${actor}`,
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  await db.insert(agentActivityLogs).values({
+    agentId: agent.id,
+    agentName: agent.name,
+    action: `مأموریت تأییدشده اجرا و برگهٔ تحویل ثبت شد: ${job.title}`,
+    status: "success",
+    detail: sheet.slice(0, 1900),
+    jobId: job.id,
+    source: "mission",
+    meta: {
+      missionKey: p.missionKey || null,
+      deliverable,
+      analysisModel,
+      actor,
+      facts: {
+        pendingTotal: facts.queue.pendingTotal,
+        openProjects: facts.projects.open,
+        unreadMessages: facts.messages.unread,
+        pendingDeposits: facts.deposits.pendingVerification,
+      },
+    },
+  }).catch(() => {});
+
+  await db
+    .update(agents)
+    .set({
+      successCount: sql`${agents.successCount} + 1`,
+      tasksCompleted: sql`${agents.tasksCompleted} + 1`,
+      lastActiveAt: new Date(),
+    })
+    .where(eq(agents.id, agent.id))
+    .catch(() => {});
+
+  const chatId = ENV.telegramAdminChat();
+  let telegram: any = { ok: false, error: "not_configured" };
+  if (telegramConfigured() && chatId) {
+    telegram = await notifyAdmin(
+      `✅ <b>مأموریت اجرا شد — ${escapeHtml(agent.name)}</b> #${job.id}\n` +
+        `📋 ${escapeHtml(job.title)}\n` +
+        `📦 <b>خروجی:</b> ${escapeHtml(deliverable)}\n\n` +
+        `<pre>${escapeHtml(analysis ? analysis.slice(0, 1200) : factsBlock.slice(0, 900))}</pre>\n` +
+        `🔁 <i>جایگاه این مأموریت در صف با مأموریت بعدی پر می‌شود.</i>`,
+    );
+  }
+
+  return {
+    ok: true,
+    result: {
+      deliverable,
+      analysis,
+      analysisModel,
+      facts: factsBlock,
+      sheet,
+      telegram,
+      note: "برگهٔ تحویل در دفتر کارمند ثبت شد؛ هیچ تراکنش مالی در این مأموریت ساخته نشد.",
+    },
+  };
+}
+
 async function executeProposalOrBounty(
   job: JobRecord,
   actor: string,
@@ -696,6 +936,9 @@ async function executeJob(job: JobRecord, actor: string): Promise<ExecutionResul
       case "proposal":
       case "bounty":
         result = await executeProposalOrBounty(job, actor);
+        break;
+      case "mission":
+        result = await executeMission(job, actor);
         break;
       default:
         result = await markFailed(job, `نوع کار «${job.kind}» اجراکننده ندارد`, "unsupported_kind");
@@ -846,43 +1089,32 @@ export async function remindPendingApprovals(olderThanMinutes = 45, windowMinute
   return { sent, candidates: rows.length };
 }
 
-/** تولید گزارش روزانه‌ی همه‌ی کارمندان و ارسال به تلگرام (کرون). */
+/**
+ * گزارش دوره‌ای/روتین همه‌ی کارمندان.
+ *
+ * ⛔ سیاست مدیرعامل (۱۴۰۵/۰۸/۱۶): ارسال خودکار گزارش‌های دوره‌ای به تلگرام
+ * متوقف شده است. گزارش فقط زمانی ساخته و ارسال می‌شود که مدیرعامل شخصاً
+ * درخواست کند. برای همین این تابع (که تنها مصرف‌کننده‌اش کرون و پارامتر
+ * دستی «ارسال گزارش روزانه» در پنل/تلگرام بود) هیچ پیامی نمی‌فرستد و فقط
+ * وضعیت «غیرفعال» را برمی‌گرداند.
+ *
+ * گزارش دستی: POST /api/agents/[id]/report  (با useAi و sendToTelegram)
+ */
 export async function sendDailyReports() {
-  const all = await db.select().from(agents);
-  let sent = 0;
-  const errors: string[] = [];
-  for (const agent of all) {
-    if (agent.status !== "active") continue;
-    try {
-      const report = await generateAgentReport(agent.id, { useAi: true });
-      if (!report.ok) {
-        errors.push(`${agent.name}: ${report.error}`);
-        continue;
-      }
-      if (telegramConfigured() && ENV.telegramAdminChat()) {
-        const res = await notifyAdmin(
-          `<b>📊 گزارش روزانه ${escapeHtml(agent.name)}</b>\n\n${escapeHtml(report.text)}`
-        );
-        if (res.ok) sent++;
-        else errors.push(`${agent.name}: ${(res as any).description || (res as any).error}`);
-      }
-      await db.insert(agentJobs).values({
-        agentId: agent.id,
-        agentName: agent.name,
-        kind: "status_report",
-        title: "گزارش روزانه خودکار",
-        detail: "ساخته‌شده توسط Vercel Cron",
-        payload: {},
-        status: "succeeded",
-        requiresApproval: false,
-        result: { report: report.text, source: report.source },
-        finishedAt: new Date(),
-      });
-    } catch (e: any) {
-      errors.push(`${agent.name}: ${e?.message || e}`);
-    }
-  }
-  return { sent, agents: all.length, errors };
+  void agents;
+  void generateAgentReport;
+  void notifyAdmin;
+  void escapeHtml;
+  void telegramConfigured;
+  void ENV;
+  return {
+    sent: 0,
+    agents: 0,
+    disabled: true,
+    reason:
+      "ارسال خودکار گزارش‌های دوره‌ای به دستور مدیرعامل خاموش شده است؛ گزارش فقط با درخواست دستی شما تولید می‌شود.",
+    errors: [] as string[],
+  };
 }
 
 export async function expireStaleApprovals(olderThanHours = 72) {

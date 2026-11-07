@@ -4,6 +4,7 @@ import {
   type ExchangeStatus,
 } from "@/lib/exchange";
 import { ENV } from "@/lib/env";
+import { checkLiveGate } from "@/lib/live-gate";
 import { telegramConfigured } from "@/lib/telegram";
 
 /**
@@ -30,6 +31,7 @@ export type JobKind =
   | "withdraw"
   | "proposal"
   | "bounty"
+  | "mission"
   | "custom";
 
 export type PreflightBlocker = {
@@ -57,6 +59,7 @@ const SUPPORTED_KINDS: JobKind[] = [
   "withdraw",
   "proposal",
   "bounty",
+  "mission",
 ];
 
 /** کارهایی که هیچ‌وقت خودکار (بدون تأیید مدیرعامل) اجرا نمی‌شوند. */
@@ -66,6 +69,7 @@ const ALWAYS_HUMAN_KINDS: JobKind[] = [
   "confirm_deposit",
   "proposal",
   "bounty",
+  "mission",
 ];
 
 function blockerFromExchange(b: ExchangeBlocker): PreflightBlocker {
@@ -135,6 +139,12 @@ export async function preflightJobKind(
       exchange = opts.exchange ?? (await exchangeStatus());
       if (!exchange.canExecuteOrders) {
         blockers.push(...exchange.blockers.map(blockerFromExchange));
+      } else {
+        // دروازهٔ معاملهٔ واقعی: سرمایهٔ ثبت‌شده + سقف‌های روزانه + kill-switch
+        const gate = await checkLiveGate(qty || quantity || undefined);
+        for (const b of gate.blockers) {
+          blockers.push({ code: b.code, label: b.label, missing: [], action: b.action });
+        }
       }
       break;
     }
@@ -198,6 +208,11 @@ export async function preflightJobKind(
       }
       break;
     }
+
+    case "mission":
+      // مأموریت‌های حلقهٔ ۲۴/۷ کار داخلی (تحلیل/تدوین/بازرسی) هستند و
+      // هیچ تراکنش مالی از خودشان نمی‌سازند؛ پس پیش‌بررسی مالی ندارند.
+      break;
 
     case "proposal":
     case "bounty":
