@@ -36,9 +36,28 @@ export type VerifiedBounty = {
  * این فهرست فقط زمانی استفاده می‌شود که تنظیم `bounty_sources` در دیتابیس خالی باشد.
  */
 const DEFAULT_SOURCES = [
+  // فید «لیست کمپین‌های ایردراپ» در AirdropAlert (هر آیتم = یک کمپین واقعی)
+  "https://airdropalert.com/airdrops/feed/",
+  // فید عمومی airdrops.io (شامل بلاگ؛ موارد بلاگی در فاز ۴ رد می‌شوند)
   "https://airdrops.io/feed/",
-  "https://airdropalert.com/feed/",
 ];
+
+/**
+ * 🚫 الگوی URL محتوایی (بلاگ/خبر/آموزش) — منبع کمپین مستقیم نیست.
+ * این‌ها فقط وقتی پذیرفته می‌شوند که نشانه صریح «کمپین فعال/کلایم» داشته باشند.
+ */
+const EDITORIAL_URL = /\/(blog|news|insights|learn|guides?|category|tag|author)\//i;
+
+/** ✅ نشانه‌های صریح کمپین قابل مطالبه (شرط عبور از فاز ۴). */
+const CAMPAIGN_SIGNALS =
+  /\bairdrop\b|claim (now|is |page|live)|free (hash )?node|no (deposit|purchase|investment) (required|needed)|free to (claim|join|participate)|sign[- ]?up (bonus|reward|airdrop)|points? (program|convert)|quest(s)?\b|testnet|faucet|giveaway|reward(s)? (program|pool|paid out)|festival|bounty program/i;
+
+/**
+ * ✅ نشانه «اقدام فوری/مطالبه واقعی» — تنها استثنایی که اجازه می‌دهد یک
+ * آیتم بلاگی هم به‌عنوان کمپین در نظر گرفته شود.
+ */
+const STRONG_CLAIM_SIGNAL =
+  /claim (now|is |page|live)|claim (your|the) (airdrop|tokens|reward)|free (hash )?node|no (deposit|purchase|investment) (required|needed)|free to claim|sign[- ]?up (bonus|reward|airdrop)|points? convert (to )?\$?[A-Z]{2,}/i;
 
 function stripTags(html: string): string {
   return html
@@ -203,18 +222,27 @@ function evaluateItemDeterministically(item: RawFeedItem): VerifiedBounty {
     };
   }
 
-  // ── فاز ۴: محتوای آموزشی/خبری (کمپین مستقیم نیست) ─────────────────────
-  if (GUIDE_SIGNALS.test(item.title) && !isFree) {
+  // ── فاز ۴: محتوای آموزشی/خبری/تحلیلی (کمپین مستقیم نیست) ───────────────
+  // اصل: B7 فقط «کمپین قابل مطالبه» می‌خواهد؛ نه مقاله، نه تحلیل قیمت، نه خبر.
+  const strongClaim = STRONG_CLAIM_SIGNAL.test(hay);
+  const questionTitle = /\?\s*$/.test(item.title.trim());
+  const editorial =
+    !strongClaim &&
+    (questionTitle ||
+      GUIDE_SIGNALS.test(item.title) ||
+      EDITORIAL_URL.test(item.link) ||
+      !CAMPAIGN_SIGNALS.test(hay));
+  if (editorial) {
     return {
       title: item.title,
       link: item.link,
       verdict: "suspicious",
-      trustScore: 55,
-      rewardLabel: "مقاله آموزشی (کمپین مستقیم نیست)",
+      trustScore: 45,
+      rewardLabel: "مقاله/خبر (کمپین پاداش مستقیم نیست)",
       estimatedProfitUsdt: 0,
-      estimatedDuration: "۱۵ دقیقه مطالعه",
+      estimatedDuration: "—",
       analysisReason:
-        "محتوای آموزشی/خبری است و کمپین پاداش مستقیم قابل مطالبه ندارد.",
+        "محتوا آموزشی/خبری یا تحلیلی است و کمپین پاداش رایگان قابل مطالبه ندارد؛ طبق پروتکل B7 کنار گذاشته شد.",
       rejection: "editorial_content",
       cryptoAsset: asset,
     };
@@ -287,11 +315,13 @@ export async function scanBountyFeeds(opts: {
 }> {
   const map = await getSettingMap();
   const minScore = Number(map.get("bounty_min_score") || 70);
+  // فیدهای کمپین پیش‌فرض همیشه اولویت دارند؛ منابع دستی (bounty_sources)
+  // به آن‌ها اضافه می‌شوند تا افزودن منبع جدید هرگز منبع کمپین را قطع نکند.
   const rawSources = (map.get("bounty_sources") || "").trim();
-  const sources = (rawSources ? rawSources.split(/[\n,]+/) : DEFAULT_SOURCES)
-    .map((s) => s.trim())
-    .filter(Boolean)
-    .slice(0, 4);
+  const extraSources = rawSources ? rawSources.split(/[\n,]+/) : [];
+  const sources = Array.from(
+    new Set([...DEFAULT_SOURCES, ...extraSources].map((s) => s.trim()).filter(Boolean)),
+  ).slice(0, 4);
 
   let seen: string[] = [];
   try {
@@ -341,6 +371,11 @@ export async function scanBountyFeeds(opts: {
   const existingLinks = opts.existingLinks ?? new Set<string>();
   let candidates = allFetched.filter(
     (it) => !seen.includes(it.link) && !existingLinks.has(it.link),
+  );
+
+  // کمپین‌های واقعی قبل از مقالات/بلاگ بررسی می‌شوند (ظرفیت بررسی محدود است)
+  candidates = candidates.sort(
+    (a, b) => Number(EDITORIAL_URL.test(a.link)) - Number(EDITORIAL_URL.test(b.link)),
   );
 
   // اگر همه قبلاً دیده شده‌اند ولی در چرخه شروع رسمی هنوز پیشنهاد فعالی ثبت نشده، ۳ مورد آخر بررسی می‌شوند
