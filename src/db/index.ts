@@ -22,6 +22,21 @@ const needsSsl =
   databaseUrl.includes("sslmode=require") ||
   process.env.NODE_ENV === "production";
 
+// Strip `sslmode` from the URL: this app manages TLS itself via the `ssl`
+// option below. Newer `pg` versions map `sslmode=require` to full chain
+// verification, which breaks Supabase pooler (self-signed chain) with
+// SELF_SIGNED_CERT_IN_CHAIN. Removing it makes behavior deterministic.
+let connectionString = databaseUrl;
+try {
+  const u = new URL(databaseUrl);
+  if (u.searchParams.has("sslmode")) {
+    u.searchParams.delete("sslmode");
+    connectionString = u.toString();
+  }
+} catch {
+  // keep original string if it is not a parseable URL
+}
+
 const globalForDb = globalThis as typeof globalThis & {
   __arenaNextJsPostgresqlPool?: Pool;
 };
@@ -29,7 +44,7 @@ const globalForDb = globalThis as typeof globalThis & {
 export const pool =
   globalForDb.__arenaNextJsPostgresqlPool ??
   new Pool({
-    connectionString: databaseUrl,
+    connectionString,
     max: process.env.VERCEL ? 4 : 10,
     idleTimeoutMillis: 20000,
     connectionTimeoutMillis: 10000,
