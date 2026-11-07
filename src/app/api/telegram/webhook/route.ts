@@ -1,34 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db";
-import { messages, tasks, agentLogs } from "@/db/schema";
+import { messages, tasks, agentLogs, agents } from "@/db/schema";
+import { eq } from "drizzle-orm";
 import { ensureSeed, getMasterWallet } from "@/lib/seed";
-
-async function sendRealTelegramMessage(
-  chatId: string | number,
-  text: string,
-  replyMarkup?: any
-) {
-  const token = process.env.TELEGRAM_BOT_TOKEN;
-  if (!token || !chatId) return { sent: false, reason: "no_token" };
-  try {
-    const res = await fetch(
-      `https://api.telegram.org/bot${token}/sendMessage`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          chat_id: chatId,
-          text,
-          parse_mode: "HTML",
-          reply_markup: replyMarkup,
-        }),
-      }
-    );
-    return { sent: res.ok, status: res.status };
-  } catch {
-    return { sent: false, reason: "network_error" };
-  }
-}
+import { sendTelegramMessage } from "@/lib/telegram";
+import { recordScoreEvent } from "@/lib/leaderboard";
 
 export async function POST(req: NextRequest) {
   await ensureSeed();
@@ -42,9 +18,55 @@ export async function POST(req: NextRequest) {
   const masterWallet = await getMasterWallet();
 
   // 1) پاسخ دکمه شیشه‌ای تلگرام (Inline Button Callback)
+  // تأیید/رد انسانی = تنها نقطهٔ ورود «نتیجهٔ پروژه» به لیگ کارمندان.
   if (b.callback_query) {
     const data = b.callback_query.data || "";
-    const [action, id] = data.split(":");
+    const [action, idRaw] = data.split(":");
+    const id = Number(idRaw);
+    const approved = action === "approve";
+    const rejected = action === "reject";
+    let leagueNote = "";
+
+    if ((approved || rejected) && id > 0) {
+      const [task] = await db.select().from(tasks).where(eq(tasks.id, id)).limit(1);
+      if (task) {
+        await db
+          .update(tasks)
+          .set({ status: approved ? "approved" : "rejected" })
+          .where(eq(tasks.id, id));
+
+        const allAgents = await db.select().from(agents);
+        const agent =
+          allAgents.find((a) => a.name === task.agent) ||
+          allAgents.find(
+            (a) =>
+              task.agent.length > 3 &&
+              (task.agent.includes(a.name) || a.name.includes(task.agent))
+          );
+
+        if (agent) {
+          const created = task.createdAt ? new Date(task.createdAt).getTime() : 0;
+          const durationMinutes = created
+            ? Math.min(10080, Math.max(1, Math.round((Date.now() - created) / 60000)))
+            : 0;
+          const result = await recordScoreEvent({
+            agentId: agent.id,
+            outcome: approved ? "success" : "failure",
+            projectTitle: task.projectTitle || task.title,
+            durationMinutes,
+            source: "hitl",
+            sourceRef: `task:${id}:${approved ? "approve" : "reject"}`,
+            note: `تأیید انسانی (HITL) از ${b.callback_query.from?.username || "پنل مدیر"}`,
+          }).catch((e) => ({ duplicate: true, event: null, error: String(e) }));
+          leagueNote = result.duplicate
+            ? " • نتیجه قبلاً ثبت شده بود (بدون دوباره‌شماری)"
+            : ` • ${approved ? "+۱۰ موفقیت" : "-۵ شکست"} امتیاز لیگ برای «${agent.name}»`;
+        } else {
+          leagueNote = " • ایجنت متناظر یافت نشد (امتیازی ثبت نشد)";
+        }
+      }
+    }
+
     await db.insert(agentLogs).values({
       agent: "Webhook تلگرام",
       action: data.startsWith("approve")
@@ -53,7 +75,7 @@ export async function POST(req: NextRequest) {
       status: "success",
       detail: `callback_query: ${data} از ${
         b.callback_query.from?.username || "admin"
-      }`,
+      }${leagueNote}`,
       durationMs: 180,
     });
     return NextResponse.json({
@@ -130,7 +152,7 @@ export async function POST(req: NextRequest) {
   // اگر توکن واقعی تلگرام ست شده باشد، به ادمین یا چت پاسخ می‌فرستد
   const adminChat = process.env.TELEGRAM_ADMIN_CHAT_ID;
   if (adminChat) {
-    await sendRealTelegramMessage(
+    await sendTelegramMessage(
       adminChat,
       `📩 <b>پیام جدید از ${name} (${username}):</b>\n${text}`,
       inlineKeyboard

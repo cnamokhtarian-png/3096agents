@@ -2,6 +2,19 @@
 import { useEffect, useMemo, useState } from "react";
 
 const fa = (n: any) => Number(n || 0).toLocaleString("fa-IR");
+const persianMonth = (p: string) => {
+  const [y, m] = String(p).split("-").map(Number);
+  try {
+    return new Intl.DateTimeFormat("fa-IR-u-ca-persian", {
+      month: "long",
+      year: "numeric",
+      timeZone: "UTC",
+    }).format(new Date(Date.UTC(y, m - 1, 1)));
+  } catch {
+    return p;
+  }
+};
+const medal = (rank: number) => ["🥇", "🥈", "🥉"][rank - 1] || fa(rank);
 
 const statusMap: Record<string, [string, string]> = {
   new: ["جدید", "bg-blue-100 text-blue-700"],
@@ -45,6 +58,20 @@ export default function Control() {
   const [stats, setStats] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState("");
+
+  // 🏆 لیگ کارمندان / کارمند برتر ماه
+  const [league, setLeague] = useState<any>(null);
+  const [leaguePeriod, setLeaguePeriod] = useState("");
+  const [leagueConfig, setLeagueConfig] = useState<any>(null);
+  const [leagueBusy, setLeagueBusy] = useState(false);
+  const [leaguePreview, setLeaguePreview] = useState("");
+  const [leagueEvent, setLeagueEvent] = useState<any>({
+    agentId: "",
+    outcome: "success",
+    projectTitle: "",
+    durationMinutes: "45",
+    note: "",
+  });
 
   // فیلتر و فرم پروژه
   const [q, setQ] = useState("");
@@ -119,8 +146,110 @@ export default function Control() {
     notify(label);
   };
 
-  async function load() {
-    const [p, t, m, tx, l, tl, ag, wl, s] = await Promise.all([
+  // ---------- 🏆 لیگ کارمندان ----------
+  function changeLeaguePeriod(p: string) {
+    setLeaguePeriod(p);
+    setLeaguePreview("");
+    load(p);
+  }
+
+  async function saveLeagueEvent(e: any) {
+    e.preventDefault();
+    if (!leagueEvent.agentId) {
+      notify("ابتدا ایجنت را انتخاب کنید ⚠️");
+      return;
+    }
+    setLeagueBusy(true);
+    const res = await fetch("/api/leaderboard/events", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        agentId: Number(leagueEvent.agentId),
+        outcome: leagueEvent.outcome,
+        projectTitle: leagueEvent.projectTitle,
+        durationMinutes: Number(leagueEvent.durationMinutes) || 0,
+        note: leagueEvent.note,
+        period: league?.period,
+      }),
+    });
+    const d = await res.json();
+    setLeagueBusy(false);
+    notify(d.message || d.error || "نتیجه ثبت شد");
+    if (d.ok) {
+      setLeagueEvent((prev: any) => ({ ...prev, projectTitle: "", note: "" }));
+      load();
+    }
+  }
+
+  async function deleteLeagueEvent(id: number) {
+    if (!confirm("این نتیجه از دفترچهٔ لیگ حذف شود؟")) return;
+    await fetch(`/api/leaderboard/events?id=${id}`, { method: "DELETE" });
+    notify("نتیجه حذف و امتیازها دوباره محاسبه شد 🗑️");
+    load();
+  }
+
+  async function clearDemoEvents() {
+    if (!confirm("همهٔ دادههای نمونهٔ لیگ حذف شوند؟ (نتایج واقعی باقی میمانند)")) return;
+    await fetch("/api/leaderboard/events?source=seed", { method: "DELETE" });
+    notify("دادههای نمونه پاک شدند 🧹");
+    load();
+  }
+
+  async function saveLeagueConfig(e: any) {
+    e.preventDefault();
+    setLeagueBusy(true);
+    const res = await fetch("/api/leaderboard", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(leagueConfig),
+    });
+    const d = await res.json();
+    setLeagueBusy(false);
+    if (!d.ok) {
+      notify(d.error || "خطا در ذخیرهٔ تنظیمات");
+      return;
+    }
+    setLeagueConfig(d.config);
+    notify("وزنها و اهداف فرمول ذخیره شد ⚙️");
+    load();
+  }
+
+  async function previewLeague() {
+    setLeagueBusy(true);
+    const r = await fetch(
+      `/api/leaderboard/close${league?.period ? `?period=${league.period}` : ""}`
+    );
+    const d = await r.json();
+    setLeagueBusy(false);
+    setLeaguePreview(d.telegramMessage || d.error || "");
+    notify("پیشنمایش پیام تلگرام آماده شد 👁️");
+  }
+
+  async function closeLeagueMonth(force = false, periodOverride?: string) {
+    setLeagueBusy(true);
+    const r = await fetch("/api/leaderboard/close", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ period: periodOverride || league?.period, force }),
+    });
+    const d = await r.json();
+    setLeagueBusy(false);
+    setLeaguePreview(d.telegramMessage || "");
+    notify(
+      d.error
+        ? d.error
+        : d.alreadyAwarded
+        ? "این دوره قبلاً اعلام شده است (برای ارسال مجدد، force را بزنید) 🏆"
+        : d.telegram?.sent
+        ? "🏆 کارمند برتر ماه اعلام و به تلگرام ارسال شد"
+        : "🏆 برنده ثبت شد (ارسال تلگرام: توکن/چت تنظیم نشده یا شبیهسازی)"
+    );
+    load();
+  }
+
+  async function load(periodOverride?: string) {
+    const lp = periodOverride !== undefined ? periodOverride : leaguePeriod;
+    const [p, t, m, tx, l, tl, ag, wl, s, lg] = await Promise.all([
       fetch("/api/projects").then((r) => r.json()),
       fetch("/api/rest?type=tasks").then((r) => r.json()),
       fetch("/api/rest?type=messages").then((r) => r.json()),
@@ -130,6 +259,9 @@ export default function Control() {
       fetch("/api/agents").then((r) => r.json()),
       fetch("/api/wallet").then((r) => r.json()),
       fetch("/api/stats").then((r) => r.json()),
+      fetch(`/api/leaderboard${lp ? `?period=${lp}` : ""}`)
+        .then((r) => r.json())
+        .catch(() => null),
     ]);
     setProjects(Array.isArray(p) ? p : []);
     setTasks(Array.isArray(t) ? t : []);
@@ -147,6 +279,10 @@ export default function Control() {
       });
     }
     setStats(s);
+    if (lg && !lg.error) {
+      setLeague(lg);
+      setLeagueConfig((prev: any) => prev ?? lg.config ?? null);
+    }
     setLoading(false);
   }
 
@@ -168,6 +304,8 @@ export default function Control() {
         .catch(() => {});
     }, 6000);
     return () => clearInterval(iv);
+    // load() فقط یکبار در mount اجرا میشود؛ بقیهٔ بروزرسانیها صریحاً فراخوانی میشوند.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const filtered = projects.filter(
@@ -464,6 +602,22 @@ export default function Control() {
 
   const maxChart = Math.max(...(stats?.chart?.map((c: any) => c.v) || [1]));
 
+  const lb = league;
+  const lbRows: any[] = Array.isArray(lb?.rows) ? lb.rows : [];
+  const lbWinner = lb?.winner || null;
+  const lbEvents: any[] = Array.isArray(lb?.recentEvents) ? lb.recentEvents : [];
+  const lbAwards: any[] = Array.isArray(lb?.awards) ? lb.awards : [];
+  const lbPeriods: string[] = Array.isArray(lb?.periods) ? lb.periods : [];
+  const lbCfg = leagueConfig ||
+    lb?.config || {
+      weightSuccess: 60,
+      weightRevenue: 30,
+      weightSpeed: 10,
+      revenueTarget: 1000,
+      durationTarget: 60,
+      boostMultiplier: 2,
+    };
+
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
@@ -480,6 +634,7 @@ export default function Control() {
   const nav: [string, string][] = [
     ["dashboard", "🏠 داشبورد"],
     ["agents", "🪙 ناوگان ایجنت‌ها و رمزارز"],
+    ["leaderboard", "🏆 لیگ کارمندان"],
     ["projects", "💼 پروژه‌ها"],
     ["chats", "💬 گفتگوها"],
     ["approvals", "✅ تأیید انسانی"],
@@ -807,6 +962,604 @@ export default function Control() {
                   </div>
                 ))}
               </div>
+            </div>
+
+            {/* خلاصهٔ لیگ کارمندان روی داشبورد */}
+            <div className="bg-gradient-to-l from-amber-50 via-white to-white border border-amber-200 rounded-3xl p-5 mt-4">
+              <div className="flex flex-wrap justify-between items-center gap-2">
+                <h3 className="font-black">
+                  🏆 لیگ کارمندان — {lb?.periodTitle || "دورهٔ جاری"}
+                </h3>
+                <button
+                  onClick={() => setView("leaderboard")}
+                  className="text-xs bg-amber-400 text-black px-3 py-1.5 rounded-full font-bold"
+                >
+                  مشاهدهٔ جدول کامل ←
+                </button>
+              </div>
+              <div className="grid md:grid-cols-3 gap-3 mt-3">
+                {lbRows.slice(0, 3).map((r) => (
+                  <div key={r.agentId} className="bg-white border rounded-2xl p-3">
+                    <div className="flex justify-between items-center gap-2">
+                      <span className="font-bold text-sm truncate">
+                        {medal(r.rank)} {r.avatar} {r.name}
+                      </span>
+                      <b className="text-amber-600">{fa(r.score)}</b>
+                    </div>
+                    <div className="h-1.5 bg-slate-100 rounded-full mt-2">
+                      <div
+                        className="h-full bg-amber-400 rounded-full"
+                        style={{ width: `${Math.min(100, r.score)}%` }}
+                      ></div>
+                    </div>
+                    <p className="text-xs text-slate-500 mt-1">
+                      {fa(r.successRate)}٪ موفق • {fa(r.revenueUsdt)} USDT
+                      {r.boosted ? " • 🚀 اولویت ویژه" : ""}
+                    </p>
+                  </div>
+                ))}
+                {lbRows.length === 0 && (
+                  <p className="text-slate-400 text-sm">دادهای برای لیگ ثبت نشده است</p>
+                )}
+              </div>
+            </div>
+          </section>
+        )}
+
+        {/* ==================== 🏆 لیگ کارمندان / کارمند برتر ماه ==================== */}
+        {view === "leaderboard" && (
+          <section className="mt-4 space-y-4">
+            {/* هدر و کنترل دوره */}
+            <div className="bg-gradient-to-l from-[#0B1220] to-[#16263f] text-white rounded-3xl p-5 flex flex-wrap items-center justify-between gap-4">
+              <div>
+                <span className="bg-amber-400 text-black text-xs font-black px-3 py-1 rounded-full">
+                  🏆 سیستم ارزیابی و رقابت ایجنتها
+                </span>
+                <h2 className="text-2xl font-black mt-3">
+                  کارمند برتر ماه — {lb?.periodTitle || "در حال بارگذاری"}
+                </h2>
+                <p className="text-slate-300 text-xs mt-2 leading-6">
+                  {lb?.formula || "موفقیت ۶۰٪ • درآمد ۳۰٪ • سرعت و دقت ۱۰٪"}
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <select
+                  value={leaguePeriod}
+                  onChange={(e) => changeLeaguePeriod(e.target.value)}
+                  className="bg-white text-slate-900 rounded-xl px-3 py-2 text-sm font-bold"
+                >
+                  <option value="">دورهٔ جاری</option>
+                  {lbPeriods.map((p) => (
+                    <option key={p} value={p}>
+                      {persianMonth(p)}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  onClick={() => load()}
+                  className="bg-white/15 hover:bg-white/25 px-3 py-2 rounded-xl text-sm font-bold"
+                >
+                  🔄 بروزرسانی
+                </button>
+                <button
+                  onClick={previewLeague}
+                  disabled={leagueBusy}
+                  className="bg-white/15 hover:bg-white/25 px-3 py-2 rounded-xl text-sm font-bold disabled:opacity-50"
+                >
+                  👁️ پیشنمایش تلگرام
+                </button>
+                <button
+                  onClick={() => closeLeagueMonth(false)}
+                  disabled={leagueBusy}
+                  className="bg-amber-400 hover:bg-amber-300 text-black px-4 py-2 rounded-xl text-sm font-black disabled:opacity-50"
+                >
+                  🏆 اعلام و ارسال
+                </button>
+              </div>
+            </div>
+
+            {/* کارت برنده + پاداش ساختاری */}
+            <div className="grid lg:grid-cols-3 gap-4">
+              <div className="lg:col-span-2 bg-white border rounded-3xl p-5">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <span className="bg-amber-100 text-amber-800 text-xs font-black px-3 py-1 rounded-full">
+                      🥇 مقام اول دوره
+                    </span>
+                    <h3 className="text-xl font-black mt-3">
+                      {lbWinner ? `${lbWinner.avatar} ${lbWinner.name}` : "هنوز برندهای نداریم"}
+                    </h3>
+                    <p className="text-xs text-slate-500 mt-1">
+                      {lbWinner?.slug ? `کد ایجنت: ${lbWinner.slug}` : "برای شروع، نتیجهٔ یک پروژه را ثبت کنید"}
+                    </p>
+                  </div>
+                  <div className="text-left">
+                    <p className="text-3xl font-black text-amber-600">
+                      {fa(lbWinner?.score || 0)}
+                    </p>
+                    <p className="text-xs text-slate-400">امتیاز از ۱۰۰</p>
+                  </div>
+                </div>
+
+                {lbWinner && (
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mt-4">
+                    <div className="bg-emerald-50 rounded-2xl p-3">
+                      <p className="text-xs text-slate-500">نرخ موفقیت</p>
+                      <b className="text-emerald-700">{fa(lbWinner.successRate)}٪</b>
+                      <p className="text-[11px] text-slate-500">
+                        {fa(lbWinner.successes)} از {fa(lbWinner.totalProjects)} پروژه
+                      </p>
+                    </div>
+                    <div className="bg-sky-50 rounded-2xl p-3">
+                      <p className="text-xs text-slate-500">سود خالص</p>
+                      <b className="text-sky-700">{fa(lbWinner.revenueUsdt)} USDT</b>
+                      <p className="text-[11px] text-slate-500">تراکنشهای تأییدشده</p>
+                    </div>
+                    <div className="bg-violet-50 rounded-2xl p-3">
+                      <p className="text-xs text-slate-500">زمان تأیید</p>
+                      <b className="text-violet-700">{fa(lbWinner.avgDurationMinutes)} دقیقه</b>
+                      <p className="text-[11px] text-slate-500">پیشنهاد → تحویل</p>
+                    </div>
+                    <div className="bg-amber-50 rounded-2xl p-3">
+                      <p className="text-xs text-slate-500">امتیاز انگیزشی</p>
+                      <b className="text-amber-700">{fa(lbWinner.points)}</b>
+                      <p className="text-[11px] text-slate-500">+۱۰ / -۵ / -۸</p>
+                    </div>
+                  </div>
+                )}
+
+                {lbWinner && (
+                  <div className="mt-4 space-y-2">
+                    {([
+                      ["success", "نرخ موفقیت (هموارشده)", "weightSuccess", "bg-emerald-500"],
+                      ["revenue", "حجم و ارزش خروجی", "weightRevenue", "bg-sky-500"],
+                      ["speed", "سرعت عمل و دقت", "weightSpeed", "bg-violet-500"],
+                    ] as const).map(([key, label, weightKey, color]) => {
+                      const part = Number(lbWinner.breakdown?.[key] || 0);
+                      const max = Number(lbCfg[weightKey] || 1);
+                      return (
+                        <div key={key}>
+                          <div className="flex justify-between text-xs font-bold">
+                            <span>
+                              {label} — {fa(max)}٪ وزن
+                            </span>
+                            <span>
+                              {fa(part)} / {fa(max)} امتیاز
+                            </span>
+                          </div>
+                          <div className="h-2 bg-slate-100 rounded-full mt-1">
+                            <div
+                              className={`h-full ${color} rounded-full`}
+                              style={{ width: `${Math.min(100, (part / max) * 100)}%` }}
+                            ></div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              <div className="bg-white border rounded-3xl p-5">
+                <h3 className="font-black">🎁 پاداش ساختاری</h3>
+                <p className="text-sm text-slate-500 mt-2 leading-7">
+                  برندهٔ هر دوره در دورهٔ بعدیِ تخصیص منابع، اولویت اسکن بازار و
+                  پردازش بیشتری میگیرد؛ وقتی در <code dir="ltr">/api/agents/ingest</code>{" "}
+                  ایجنتی صریحاً مشخص نشود، مأموریت به برنده سپرده میشود.
+                </p>
+                <div className="bg-amber-50 border border-amber-200 rounded-2xl p-3 mt-3 text-sm">
+                  <b>
+                    🚀 اولویت{" "}
+                    {fa(lb?.boost?.multiplier || lbCfg.boostMultiplier)} برابری
+                  </b>
+                  <p className="text-xs text-slate-600 mt-1">
+                    ایجنت: {lb?.boost?.name || "هنوز برندهای اعلام نشده"}
+                  </p>
+                  <p className="text-xs text-slate-600">
+                    دورهٔ مشمول:{" "}
+                    {lb?.boost?.period ? persianMonth(lb.boost.period) : "—"}
+                  </p>
+                </div>
+                <button
+                  onClick={() => closeLeagueMonth(false)}
+                  disabled={leagueBusy}
+                  className="w-full bg-[#0B1220] text-white py-2.5 rounded-xl font-bold text-sm mt-3 disabled:opacity-50"
+                >
+                  🏆 بستن دوره و اعلام برنده
+                </button>
+                <button
+                  onClick={() => closeLeagueMonth(true)}
+                  disabled={leagueBusy}
+                  className="w-full border py-2.5 rounded-xl font-bold text-xs mt-2 disabled:opacity-50"
+                >
+                  ارسال مجدد گزارش (force)
+                </button>
+              </div>
+            </div>
+
+            {/* جدول لیگ */}
+            <div className="bg-white border rounded-3xl p-5">
+              <div className="flex flex-wrap justify-between items-center gap-2">
+                <h3 className="font-black">📊 جدول لیگ — {fa(lbRows.length)} ایجنت</h3>
+                <span className="text-xs text-slate-500">
+                  {fa(lb?.totalEvents)} نتیجهٔ ثبتشده •{" "}
+                  {fa(lb?.totalRevenue)} USDT درآمد منتسب
+                </span>
+              </div>
+              <div className="mt-3 space-y-2">
+                {lbRows.map((r) => (
+                  <div
+                    key={r.agentId}
+                    className={`border rounded-2xl p-3 ${
+                      r.rank === 1 ? "border-amber-300 bg-amber-50/60" : ""
+                    }`}
+                  >
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className="text-xl w-8 text-center">{medal(r.rank)}</span>
+                        <span className="text-2xl">{r.avatar}</span>
+                        <div className="min-w-0">
+                          <b className="text-sm block truncate">{r.name}</b>
+                          <span className="text-xs text-slate-500">
+                            {specialtyMap[r.specialty]?.[0] || r.specialty} •{" "}
+                            {fa(r.totalProjects)} پروژه
+                          </span>
+                        </div>
+                        {r.boosted && (
+                          <span className="bg-amber-100 text-amber-800 text-[11px] px-2 py-0.5 rounded-full font-bold">
+                            🚀 اولویت ویژه
+                          </span>
+                        )}
+                        {r.needsReview && (
+                          <span className="bg-red-100 text-red-700 text-[11px] px-2 py-0.5 rounded-full font-bold">
+                            ⚠️ نیازمند بازبینی پرامپت
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-3">
+                        {r.rankDelta !== null && r.rankDelta !== 0 && (
+                          <span
+                            className={`text-xs font-bold ${
+                              r.rankDelta > 0 ? "text-emerald-600" : "text-red-500"
+                            }`}
+                          >
+                            {r.rankDelta > 0
+                              ? `▲ ${fa(r.rankDelta)} رتبه صعود`
+                              : `▼ ${fa(-r.rankDelta)} رتبه نزول`}
+                          </span>
+                        )}
+                        <div className="text-left">
+                          <b className="text-lg text-amber-600">{fa(r.score)}</b>
+                          <span className="text-xs text-slate-400"> / ۱۰۰</span>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="h-2 bg-slate-100 rounded-full mt-2">
+                      <div
+                        className="h-full bg-amber-400 rounded-full"
+                        style={{ width: `${Math.min(100, r.score)}%` }}
+                      ></div>
+                    </div>
+                    <div className="grid grid-cols-2 md:grid-cols-5 gap-2 mt-2 text-xs items-center">
+                      <span>✅ {fa(r.successRate)}٪ موفق ({fa(r.successes)}/{fa(r.totalProjects)})</span>
+                      <span>💰 {fa(r.revenueUsdt)} USDT</span>
+                      <span>⏱ {fa(r.avgDurationMinutes)} دقیقه</span>
+                      <span className={r.points < 0 ? "text-red-600" : "text-emerald-600"}>
+                        ⭐ {fa(r.points)} امتیاز انگیزشی
+                      </span>
+                      <button
+                        onClick={() => {
+                          setLeagueEvent((p: any) => ({
+                            ...p,
+                            agentId: String(r.agentId),
+                          }));
+                          notify(`ایجنت «${r.name}» برای ثبت نتیجه انتخاب شد ✍️`);
+                        }}
+                        className="border rounded-full px-2 py-1 font-bold hover:bg-slate-50"
+                      >
+                        ✍️ ثبت نتیجه
+                      </button>
+                    </div>
+                  </div>
+                ))}
+                {lbRows.length === 0 && (
+                  <p className="text-slate-400 text-sm text-center py-6">
+                    ایجنتی برای نمایش وجود ندارد
+                  </p>
+                )}
+              </div>
+            </div>
+
+            {/* تنظیمات فرمول + ثبت نتیجه */}
+            <div className="grid lg:grid-cols-2 gap-4">
+              <form onSubmit={saveLeagueConfig} className="bg-white border rounded-3xl p-5">
+                <h3 className="font-black">⚙️ تنظیم فرمول امتیازدهی (KPI)</h3>
+                <p className="text-xs text-slate-500 mt-1">
+                  وزنها بهطور خودکار نرمالسازی میشوند؛ نیازی به جمع دقیق ۱۰۰ نیست.
+                </p>
+                <div className="grid grid-cols-2 gap-3 mt-3">
+                  {([
+                    ["weightSuccess", "وزن نرخ موفقیت (٪)"],
+                    ["weightRevenue", "وزن درآمد (٪)"],
+                    ["weightSpeed", "وزن سرعت و دقت (٪)"],
+                    ["revenueTarget", "هدف درآمد دوره (USDT)"],
+                    ["durationTarget", "زمان هدف تأیید (دقیقه)"],
+                    ["boostMultiplier", "ضریب پاداش برنده"],
+                  ] as const).map(([k, label]) => (
+                    <label key={k} className="text-xs font-bold">
+                      {label}
+                      <input
+                        type="number"
+                        min="0"
+                        step="1"
+                        value={lbCfg[k] ?? 0}
+                        onChange={(e) =>
+                          setLeagueConfig({
+                            ...lbCfg,
+                            [k]: Number(e.target.value),
+                          })
+                        }
+                        className="w-full border rounded-xl p-2.5 mt-1 font-normal"
+                      />
+                    </label>
+                  ))}
+                </div>
+                <p className="text-xs text-slate-500 mt-3">
+                  مجموع وزنها:{" "}
+                  {fa(
+                    Number(lbCfg.weightSuccess) +
+                      Number(lbCfg.weightRevenue) +
+                      Number(lbCfg.weightSpeed)
+                  )}
+                  ٪
+                </p>
+                <button
+                  disabled={leagueBusy}
+                  className="w-full bg-[#0B1220] text-white py-2.5 rounded-xl font-bold text-sm mt-3 disabled:opacity-50"
+                >
+                  ذخیرهٔ تنظیمات ⚙️
+                </button>
+              </form>
+
+              <form onSubmit={saveLeagueEvent} className="bg-white border rounded-3xl p-5">
+                <h3 className="font-black">✍️ ثبت نتیجهٔ پروژه (پاداش / تنبیه دیجیتال)</h3>
+                <p className="text-xs text-slate-500 mt-1">
+                  تأیید انسانی (HITL) از پنل و تلگرام هم بهصورت خودکار اینجا ثبت میشود.
+                </p>
+                <div className="grid grid-cols-2 gap-3 mt-3">
+                  <select
+                    value={leagueEvent.agentId}
+                    onChange={(e) =>
+                      setLeagueEvent({ ...leagueEvent, agentId: e.target.value })
+                    }
+                    className="border rounded-xl p-2.5 text-sm col-span-2"
+                  >
+                    <option value="">انتخاب ایجنت *</option>
+                    {agentsList.map((a) => (
+                      <option key={a.id} value={a.id}>
+                        {a.avatar} {a.name}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    value={leagueEvent.outcome}
+                    onChange={(e) =>
+                      setLeagueEvent({ ...leagueEvent, outcome: e.target.value })
+                    }
+                    className="border rounded-xl p-2.5 text-sm col-span-2"
+                  >
+                    <option value="success">✅ موفق و تأییدشده (+۱۰)</option>
+                    <option value="failure">❌ شکست / رد شده (-۵)</option>
+                    <option value="error">⚠️ خطای اجرایی (-۸)</option>
+                  </select>
+                  <input
+                    value={leagueEvent.projectTitle}
+                    onChange={(e) =>
+                      setLeagueEvent({ ...leagueEvent, projectTitle: e.target.value })
+                    }
+                    placeholder="عنوان پروژه"
+                    className="border rounded-xl p-2.5 text-sm col-span-2"
+                  />
+                  <label className="text-xs font-bold">
+                    زمان پیشنهاد تا تأیید (دقیقه)
+                    <input
+                      type="number"
+                      min="0"
+                      value={leagueEvent.durationMinutes}
+                      onChange={(e) =>
+                        setLeagueEvent({
+                          ...leagueEvent,
+                          durationMinutes: e.target.value,
+                        })
+                      }
+                      className="w-full border rounded-xl p-2.5 mt-1 font-normal"
+                    />
+                  </label>
+                  <label className="text-xs font-bold">
+                    توضیح / دلیل خطا
+                    <input
+                      value={leagueEvent.note}
+                      onChange={(e) =>
+                        setLeagueEvent({ ...leagueEvent, note: e.target.value })
+                      }
+                      placeholder="اختیاری"
+                      className="w-full border rounded-xl p-2.5 mt-1 font-normal"
+                    />
+                  </label>
+                </div>
+                <div className="flex gap-2 mt-3">
+                  <button
+                    disabled={leagueBusy}
+                    className="flex-1 bg-emerald-500 text-white py-2.5 rounded-xl font-bold text-sm disabled:opacity-50"
+                  >
+                    ثبت نتیجه ✅
+                  </button>
+                  <button
+                    type="button"
+                    onClick={clearDemoEvents}
+                    className="border px-4 rounded-xl font-bold text-xs"
+                  >
+                    🧹 حذف دادههای نمونه
+                  </button>
+                </div>
+              </form>
+            </div>
+
+            {/* دفترچهٔ نتایج + تاریخچه + پیام تلگرام */}
+            <div className="grid lg:grid-cols-2 gap-4">
+              <div className="bg-white border rounded-3xl p-5">
+                <h3 className="font-black">🧾 دفترچهٔ نتایج ({fa(lbEvents.length)})</h3>
+                <div className="space-y-2 mt-3 max-h-80 overflow-y-auto">
+                  {lbEvents.map((e) => (
+                    <div
+                      key={e.id}
+                      className="flex justify-between items-center gap-2 border rounded-2xl px-3 py-2 text-xs"
+                    >
+                      <div className="min-w-0">
+                        <b className="block truncate">{e.agentName}</b>
+                        <span className="text-slate-500">
+                          {e.projectTitle || e.note || e.source} • {fa(e.durationMinutes)} دقیقه
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <span
+                          className={`px-2 py-0.5 rounded-full font-bold ${
+                            e.outcome === "success"
+                              ? "bg-emerald-100 text-emerald-700"
+                              : e.outcome === "failure"
+                              ? "bg-red-100 text-red-600"
+                              : "bg-amber-100 text-amber-700"
+                          }`}
+                        >
+                          {e.outcome === "success"
+                            ? "✅ موفق"
+                            : e.outcome === "failure"
+                            ? "❌ شکست"
+                            : "⚠️ خطا"}
+                        </span>
+                        <b className={e.points >= 0 ? "text-emerald-600" : "text-red-600"}>
+                          {e.points > 0 ? "+" : ""}
+                          {fa(e.points)}
+                        </b>
+                        <button
+                          onClick={() => deleteLeagueEvent(e.id)}
+                          className="text-red-500"
+                          title="حذف نتیجه"
+                        >
+                          🗑️
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                  {lbEvents.length === 0 && (
+                    <p className="text-slate-400 text-sm text-center py-6">
+                      نتیجهای در این دوره ثبت نشده است
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                <div className="bg-white border rounded-3xl p-5">
+                  <h3 className="font-black">📅 تاریخچهٔ کارمندان برتر</h3>
+                  <div className="space-y-2 mt-3">
+                    {lbAwards.map((a) => (
+                      <div
+                        key={a.id}
+                        className="border rounded-2xl p-3 flex flex-wrap justify-between items-center gap-2 text-xs"
+                      >
+                        <div>
+                          <b>
+                            🏆 {a.avatar} {a.agentName}
+                          </b>
+                          <p className="text-slate-500 mt-0.5">
+                            {persianMonth(a.period)} • {fa(a.score)} امتیاز •{" "}
+                            {fa(a.successRate)}٪ موفق • {fa(a.revenueUsdt)} USDT
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span
+                            className={`px-2 py-0.5 rounded-full font-bold ${
+                              a.telegramSent
+                                ? "bg-emerald-100 text-emerald-700"
+                                : "bg-slate-100 text-slate-600"
+                            }`}
+                          >
+                            {a.telegramSent ? "📩 ارسال شد" : "📝 اعلام نشده"}
+                          </span>
+                          <button
+                            onClick={() => closeLeagueMonth(true, a.period)}
+                            className="border rounded-full px-2 py-1 font-bold"
+                          >
+                            ارسال مجدد
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                    {lbAwards.length === 0 && (
+                      <p className="text-slate-400 text-sm text-center py-4">
+                        هنوز دورهای بسته نشده است
+                      </p>
+                    )}
+                  </div>
+                </div>
+
+                <div className="bg-white border rounded-3xl p-5">
+                  <h3 className="font-black">📩 گزارش ماهانهٔ تلگرام</h3>
+                  {leaguePreview ? (
+                    <>
+                      <pre className="bg-slate-50 border rounded-2xl p-3 mt-3 text-xs whitespace-pre-wrap leading-6 max-h-72 overflow-y-auto">
+                        {leaguePreview}
+                      </pre>
+                      <button
+                        onClick={() => copyText(leaguePreview, "پیام کپی شد ✅")}
+                        className="border px-4 py-2 rounded-xl font-bold text-xs mt-2"
+                      >
+                        📋 کپی پیام
+                      </button>
+                    </>
+                  ) : (
+                    <p className="text-sm text-slate-400 mt-3 leading-7">
+                      دکمهٔ «پیشنمایش تلگرام» را بزنید تا متن پیام «کارمند برتر ماه»
+                      بدون ارسال یا تغییر در دیتابیس ساخته شود.
+                    </p>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* توضیح روششناسی */}
+            <div className="bg-[#0B1220] text-white rounded-3xl p-5 text-xs leading-7">
+              <h3 className="font-black text-base">🧠 چرا این رقابت عادلانه و مهندسیشده است؟</h3>
+              <ul className="list-disc pr-5 mt-2 space-y-1 text-slate-300">
+                <li>
+                  <b>کیفیت بر کمیت:</b> ۶۰٪ وزن روی نرخ موفقیت است و هموارسازی لاپلاس{" "}
+                  <span dir="ltr">(s+1)/(n+2)</span> جلوی صدرنشینی با یک پروژهٔ موفق را میگیرد؛
+                  ایجنت یاد میگیرد شتابزده پیشنهاد ندهد.
+                </li>
+                <li>
+                  <b>درآمد واقعی:</b> ۳۰٪ وزن فقط از تراکنشهای تأییدشدهٔ{" "}
+                  <span dir="ltr">transactions</span> خوانده میشود، پس ثبت نتیجه و واریز سود
+                  دوبار شمرده نمیشود.
+                </li>
+                <li>
+                  <b>سرعت و دقت:</b> ۱۰٪ وزن از میانگین زمان «پیشنهاد ← تأیید نهایی»
+                  پروژههای موفق (بدون خطای اجرایی) بهدست میآید.
+                </li>
+                <li>
+                  <b>جلوگیری از تقلب:</b> کلید <span dir="ltr">source_ref</span> باعث میشود
+                  تأیید تکراری یک تسک از پنل یا تلگرام فقط یک بار امتیاز بدهد.
+                </li>
+                <li>
+                  <b>کاهش خطاهای تکراری:</b> ایجنت با کمتر از ۶۰٪ موفقیت (حداقل ۳ پروژه)
+                  بهصورت خودکار در لاگها «⚠️ نیازمند بازبینی پرامپت» علامت میخورد.
+                </li>
+                <li>
+                  <b>اتوماسیون:</b> Vercel Cron اول هر ماه{" "}
+                  <span dir="ltr">/api/leaderboard/cron</span> را صدا میزند، برنده را ذخیره،
+                  پاداش دورهٔ بعد را فعال و گزارش را به تلگرام میفرستد.
+                </li>
+              </ul>
             </div>
           </section>
         )}

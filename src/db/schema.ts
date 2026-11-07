@@ -5,6 +5,7 @@ import {
   integer,
   real,
   timestamp,
+  boolean,
 } from "drizzle-orm/pg-core";
 
 // Isolated schema inside the shared Supabase database.
@@ -117,4 +118,46 @@ export const settings = agentos.table("settings", {
   id: serial("id").primaryKey(),
   key: text("key").notNull().unique(),
   value: text("value").notNull().default(""),
+});
+
+// ===========================================================================
+// 🏆 لیگ کارمندان (Agent Leaderboard / Employee of the Month)
+// ===========================================================================
+
+// دفترچهٔ تغییرناپذیر نتایج پروژه‌ها. هر ردیف = یک نتیجهٔ نهایی (تأیید/رد/خطا).
+// source_ref یک کلید یکتا برای جلوگیری از دوباره‌شماری است (مثلاً task:12:approve).
+export const agentScoreEvents = agentos.table("agent_score_events", {
+  id: serial("id").primaryKey(),
+  agentId: integer("agent_id").notNull(),
+  agentName: text("agent_name").notNull(),
+  period: text("period").notNull(), // YYYY-MM (UTC)
+  outcome: text("outcome").notNull(), // success | failure | error
+  projectTitle: text("project_title").notNull().default(""),
+  durationMinutes: real("duration_minutes").notNull().default(0), // پیشنهاد → تأیید نهایی
+  points: integer("points").notNull().default(0), // +10 موفقیت / -5 شکست / -8 خطای اجرایی
+  source: text("source").notNull().default("manual"), // manual | hitl | ingest | api | seed
+  sourceRef: text("source_ref").unique(),
+  note: text("note").notNull().default(""),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+// اسنپ‌شات برندهٔ هر ماه (یک ردیف برای هر دوره) + وضعیت ارسال گزارش تلگرام.
+export const agentMonthlyAwards = agentos.table("agent_monthly_awards", {
+  id: serial("id").primaryKey(),
+  period: text("period").notNull().unique(),
+  agentId: integer("agent_id").notNull(),
+  agentName: text("agent_name").notNull(),
+  avatar: text("avatar").notNull().default("🤖"),
+  score: real("score").notNull().default(0),
+  successRate: real("success_rate").notNull().default(0),
+  totalProjects: integer("total_projects").notNull().default(0),
+  successCount: integer("success_count").notNull().default(0),
+  revenueUsdt: real("revenue_usdt").notNull().default(0),
+  avgDurationMinutes: real("avg_duration_minutes").notNull().default(0),
+  points: integer("points").notNull().default(0),
+  runnersUp: text("runners_up").notNull().default("[]"), // JSON string
+  telegramMessage: text("telegram_message").notNull().default(""),
+  telegramSent: boolean("telegram_sent").notNull().default(false),
+  boostMultiplier: real("boost_multiplier").notNull().default(2),
+  createdAt: timestamp("created_at").defaultNow(),
 });

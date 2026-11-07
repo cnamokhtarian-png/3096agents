@@ -9,9 +9,20 @@ import {
   agentLogs,
   toolRuns,
   settings,
+  agentScoreEvents,
+  agentMonthlyAwards,
 } from "@/db/schema";
 import { createHash, createHmac } from "crypto";
 import { eq } from "drizzle-orm";
+import {
+  DEFAULT_CONFIG,
+  OUTCOME_POINTS,
+  buildTelegramReport,
+  getLeaderboardData,
+  periodKey,
+  shiftPeriod,
+  type Outcome,
+} from "@/lib/leaderboard";
 
 export const hashPw = (p: string) =>
   createHash("sha256").update(p).digest("hex");
@@ -508,8 +519,164 @@ export async function ensureSeed() {
         },
       ]);
     }
+    try {
+      await ensureLeaderboardSeed();
+    } catch (e) {
+      // اگر مایگریشن لیگ هنوز اعمال نشده، بقیهٔ اپ سالم می‌ماند.
+      console.error("leaderboard seed error:", e);
+    }
     seeded = true;
   } catch (e) {
     console.error("seed error:", e);
+  }
+}
+
+/**
+ * دادهٔ نمونهٔ لیگ کارمندان (دورهٔ جاری + دورهٔ قبل) و پیکربندی پیش‌فرض.
+ * کاملاً idempotent است: کلید `source_ref` جلوی تکرار را می‌گیرد و اسنپ‌شات
+ * برندهٔ دورهٔ قبل فقط زمانی ساخته می‌شود که جدول جوایز خالی باشد.
+ */
+const LEAGUE_DEMO: Record<
+  string,
+  { success: number; failure: number; error: number; durations: number[] }
+> = {
+  "crypto-employee": {
+    success: 9,
+    failure: 1,
+    error: 0,
+    durations: [22, 31, 18, 27, 44, 25, 33, 29, 21],
+  },
+  "nextjs-builder": {
+    success: 6,
+    failure: 1,
+    error: 1,
+    durations: [95, 120, 80, 105, 70, 88],
+  },
+  "telegram-closer": {
+    success: 12,
+    failure: 2,
+    error: 1,
+    durations: [12, 18, 15, 20, 14, 17, 22, 11, 16, 19, 13, 15],
+  },
+  "pptx-designer": {
+    success: 4,
+    failure: 0,
+    error: 0,
+    durations: [45, 52, 38, 41],
+  },
+  "web3-translator": {
+    success: 7,
+    failure: 2,
+    error: 0,
+    durations: [65, 72, 58, 80, 61, 69, 75],
+  },
+  "custom-webhook-worker": {
+    success: 5,
+    failure: 3,
+    error: 1,
+    durations: [8, 12, 9, 11, 7],
+  },
+};
+
+async function ensureLeaderboardSeed() {
+  // ۱) پیکربندی پیش‌فرض وزن‌ها (در صورت وجود، دستکاری نمی‌شود)
+  await db
+    .insert(settings)
+    .values([
+      { key: "leaderboard_weight_success", value: String(DEFAULT_CONFIG.weightSuccess) },
+      { key: "leaderboard_weight_revenue", value: String(DEFAULT_CONFIG.weightRevenue) },
+      { key: "leaderboard_weight_speed", value: String(DEFAULT_CONFIG.weightSpeed) },
+      { key: "leaderboard_revenue_target", value: String(DEFAULT_CONFIG.revenueTarget) },
+      { key: "leaderboard_duration_target", value: String(DEFAULT_CONFIG.durationTarget) },
+      { key: "leaderboard_boost_multiplier", value: String(DEFAULT_CONFIG.boostMultiplier) },
+    ])
+    .onConflictDoNothing();
+
+  const agentRows = await db.select().from(agents).limit(50);
+  const current = periodKey();
+  const previous = shiftPeriod(current, -1);
+  const events: (typeof agentScoreEvents.$inferInsert)[] = [];
+
+  for (const period of [current, previous]) {
+    const factor = period === current ? 1 : 0.65;
+    const [y, m] = period.split("-").map(Number);
+    for (const agent of agentRows) {
+      const d = LEAGUE_DEMO[agent.slug];
+      if (!d) continue;
+      const counts: [Outcome, number][] = [
+        ["success", Math.max(1, Math.round(d.success * factor))],
+        ["failure", Math.round(d.failure * factor)],
+        ["error", Math.round(d.error * factor)],
+      ];
+      let day = 2;
+      for (const [outcome, count] of counts) {
+        for (let i = 0; i < count; i++) {
+          const duration =
+            outcome === "success"
+              ? d.durations[(i + (period === current ? 0 : 2)) % d.durations.length]
+              : 0;
+          day = Math.min(day, 27);
+          events.push({
+            agentId: agent.id,
+            agentName: agent.name,
+            period,
+            outcome,
+            projectTitle:
+              outcome === "success"
+                ? `پروژهٔ تحویل‌شدهٔ ${agent.name}`
+                : `پروژهٔ نیازمند بازبینی ${agent.name}`,
+            durationMinutes: duration,
+            points: OUTCOME_POINTS[outcome],
+            source: "seed",
+            sourceRef: `seed:${period}:${agent.slug}:${outcome}:${i}`,
+            note: "دادهٔ نمونهٔ لیگ — از پنل قابل حذف است",
+            createdAt: new Date(Date.UTC(y, m - 1, day, 9, (i * 7) % 60)),
+          });
+          day += 1;
+        }
+      }
+    }
+  }
+
+  if (events.length) {
+    await db
+      .insert(agentScoreEvents)
+      .values(events)
+      .onConflictDoNothing({ target: agentScoreEvents.sourceRef });
+  }
+
+  // ۲) یک اسنپ‌شات نمونه از «کارمند برتر ماه قبل» برای بخش تاریخچه
+  const oldAwards = await db.select().from(agentMonthlyAwards).limit(1);
+  if (oldAwards.length === 0) {
+    const data = await getLeaderboardData(previous);
+    const w = data.winner;
+    if (w) {
+      await db
+        .insert(agentMonthlyAwards)
+        .values({
+          period: previous,
+          agentId: w.agentId,
+          agentName: w.name,
+          avatar: w.avatar,
+          score: w.score,
+          successRate: w.successRate,
+          totalProjects: w.totalProjects,
+          successCount: w.successes,
+          revenueUsdt: w.revenueUsdt,
+          avgDurationMinutes: w.avgDurationMinutes,
+          points: w.points,
+          runnersUp: JSON.stringify(
+            data.rows
+              .slice(1, 4)
+              .map((r) => ({ agentId: r.agentId, name: r.name, score: r.score }))
+          ),
+          telegramMessage: buildTelegramReport(data),
+          // اسنپشات نمونه «ارسالشده» علامت میخورد تا Cron ماهانه پیام دموی
+          // ناخواستهای به تلگرام مدیر نفرستد.
+          telegramSent: true,
+          boostMultiplier: DEFAULT_CONFIG.boostMultiplier,
+        })
+        .onConflictDoNothing();
+    }
   }
 }

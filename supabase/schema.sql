@@ -122,6 +122,50 @@ CREATE TABLE IF NOT EXISTS agentos.settings (
   value TEXT NOT NULL DEFAULT ''
 );
 
+-- =========================================================================
+-- 🏆 لیگ کارمندان / کارمند برتر ماه (Agent Leaderboard)
+-- =========================================================================
+-- دفترچهٔ نتایج پروژهها. source_ref کلید یکتای idempotency است: تأیید تکراری
+-- یک تسک (از پنل یا تلگرام) دوبار امتیاز نمیدهد.
+CREATE TABLE IF NOT EXISTS agentos.agent_score_events (
+  id SERIAL PRIMARY KEY,
+  agent_id INTEGER NOT NULL REFERENCES agentos.agents(id) ON DELETE CASCADE,
+  agent_name TEXT NOT NULL,
+  period TEXT NOT NULL,                       -- YYYY-MM (UTC)
+  outcome TEXT NOT NULL,                      -- success | failure | error
+  project_title TEXT NOT NULL DEFAULT '',
+  duration_minutes REAL NOT NULL DEFAULT 0,  -- پیشنهاد → تأیید نهایی
+  points INTEGER NOT NULL DEFAULT 0,         -- +10 / -5 / -8
+  source TEXT NOT NULL DEFAULT 'manual',     -- manual | hitl | ingest | api | seed
+  source_ref TEXT UNIQUE,
+  note TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS agent_score_events_period_idx
+  ON agentos.agent_score_events (period, agent_id);
+
+-- اسنپشات برندهٔ هر دوره (یک ردیف برای هر ماه) + وضعیت ارسال گزارش تلگرام
+CREATE TABLE IF NOT EXISTS agentos.agent_monthly_awards (
+  id SERIAL PRIMARY KEY,
+  period TEXT NOT NULL UNIQUE,
+  agent_id INTEGER NOT NULL,
+  agent_name TEXT NOT NULL,
+  avatar TEXT NOT NULL DEFAULT '🤖',
+  score REAL NOT NULL DEFAULT 0,
+  success_rate REAL NOT NULL DEFAULT 0,
+  total_projects INTEGER NOT NULL DEFAULT 0,
+  success_count INTEGER NOT NULL DEFAULT 0,
+  revenue_usdt REAL NOT NULL DEFAULT 0,
+  avg_duration_minutes REAL NOT NULL DEFAULT 0,
+  points INTEGER NOT NULL DEFAULT 0,
+  runners_up TEXT NOT NULL DEFAULT '[]',
+  telegram_message TEXT NOT NULL DEFAULT '',
+  telegram_sent BOOLEAN NOT NULL DEFAULT FALSE,
+  boost_multiplier REAL NOT NULL DEFAULT 2,
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
 -- دسترسی حداقلی رول اختصاصی (فقط اگر رول وجود داشته باشد)
 DO $$
 BEGIN

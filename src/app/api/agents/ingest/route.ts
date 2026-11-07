@@ -3,6 +3,12 @@ import { db } from "@/db";
 import { agents, transactions, agentLogs } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { ensureSeed, getMasterWallet } from "@/lib/seed";
+import {
+  getBoostedAgentId,
+  getLeaderboardData,
+  periodKey,
+  recordScoreEvent,
+} from "@/lib/leaderboard";
 import { randomBytes } from "crypto";
 
 const cryptoStrategies: Record<
@@ -97,9 +103,21 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  // پاداش ساختاری: برندهٔ ماه قبل، وقتی ایجنتی بهصورت صریح مشخص نشده،
+  // اولویت تخصیص مأموریت/اسکن بازار را میگیرد.
+  let priorityBoost: { agentId: number; multiplier: number } | null = null;
   if (!targetAgent) {
-    targetAgent =
-      allAgents.find((a) => a.specialty === "crypto") || allAgents[0];
+    const boost = await getBoostedAgentId().catch(() => null);
+    const boosted = boost
+      ? allAgents.find((a) => a.id === boost.agentId)
+      : undefined;
+    if (boost && boosted) {
+      targetAgent = boosted;
+      priorityBoost = boost;
+    } else {
+      targetAgent =
+        allAgents.find((a) => a.specialty === "crypto") || allAgents[0];
+    }
   }
 
   if (!targetAgent) {
@@ -164,9 +182,43 @@ export async function POST(req: NextRequest) {
     agent: targetAgent.name,
     action: `واریز +${amountUsdt} USDT به کیف پول واحد`,
     status: "success",
-    detail: `${title} • مقصد: ${masterWallet.address.slice(0, 12)}... • هش: ${txHash}`,
+    detail: `${title} • مقصد: ${masterWallet.address.slice(0, 12)}... • هش: ${txHash}${
+      priorityBoost
+        ? ` • 🚀 اولویت ${priorityBoost.multiplier}× (برندهٔ ماه قبل)`
+        : ""
+    }`,
     durationMs: 420 + Math.round(Math.random() * 600),
   });
+
+  // 🏆 ثبت نتیجهٔ موفق در دفترچهٔ لیگ (source_ref یکتا ⇒ بدون دوباره‌شماری)
+  const leagueEvent = await recordScoreEvent({
+    agentId: targetAgent.id,
+    outcome: "success",
+    projectTitle: title,
+    durationMinutes: Number(b.durationMinutes) || 0,
+    source: "ingest",
+    sourceRef: `ingest:${tx.id}`,
+    note: `واریز تأییدشدهٔ +${amountUsdt} USDT به کیف پول واحد`,
+  }).catch(() => null);
+
+  // بازخورد عملکرد به ایجنت فراخوان (رتبه و امتیاز لحظهای)
+  let performance: any = null;
+  try {
+    const data = await getLeaderboardData(periodKey());
+    const row = data.rows.find((r) => r.agentId === targetAgent.id);
+    if (row) {
+      performance = {
+        period: data.period,
+        rank: row.rank,
+        score: row.score,
+        points: row.points,
+        successRate: row.successRate,
+        boost: row.boosted,
+      };
+    }
+  } catch {
+    // لیگ نباید جلوی واریز درآمد را بگیرد
+  }
 
   return NextResponse.json({
     ok: true,
@@ -175,5 +227,11 @@ export async function POST(req: NextRequest) {
     masterWallet,
     amountUsdt,
     report: reportText,
+    priorityBoost,
+    league: {
+      recorded: Boolean(leagueEvent?.event),
+      points: leagueEvent?.event?.points ?? 0,
+      performance,
+    },
   });
 }

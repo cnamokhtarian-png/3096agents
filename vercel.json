@@ -6,5 +6,11 @@
     "src/app/api/**/*.ts": {
       "maxDuration": 30
     }
-  }
+  },
+  "crons": [
+    {
+      "path": "/api/leaderboard/cron",
+      "schedule": "0 0 1 * *"
+    }
+  ]
 }
