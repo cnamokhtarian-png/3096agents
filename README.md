@@ -215,6 +215,14 @@ curl -X POST https://YOUR-APP.vercel.app/api/agents/ingest \
 `ADMIN_PASSWORD` همگام می‌کند. بنابراین اگر رمز را در Vercel یا `config.json` عوض کنید،
 نیازی به ویرایش دستی دیتابیس نیست — کافی است یک‌بار وارد صفحه‌ی ورود شوید.
 
+بررسی دستی هم‌راستایی (هیچ secret چاپ نمی‌شود، فقط هش SHA-256):
+
+```bash
+npm run verify:admin
+```
+
+خروجی باید با `agentos.users.password_hash` در دیتابیس برای همان ایمیل یکسان باشد.
+
 ---
 
 ## ۶) داشبورد «محیط شرکت»
