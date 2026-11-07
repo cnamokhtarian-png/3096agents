@@ -160,7 +160,7 @@ export async function GET() {
   return NextResponse.json({
     ok: true,
     webhook: "active",
-    bot: "@FreelanceAgentBot",
+    bot: "@sina_freelance_agent_bot",
     mode: process.env.TELEGRAM_BOT_TOKEN ? "live_telegram_api" : "simulation+webhook",
     inline_buttons: ["approve", "reject", "edit"],
   });

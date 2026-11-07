@@ -103,7 +103,7 @@ export async function ensureSeed() {
       await db
         .insert(settings)
         .values([
-          { key: "bot_username", value: "@FreelanceAgentBot" },
+          { key: "bot_username", value: "@sina_freelance_agent_bot" },
           { key: "bot_status", value: "connected" },
           { key: "master_wallet_address", value: defaultWallet },
           { key: "master_wallet_network", value: defaultNetwork },

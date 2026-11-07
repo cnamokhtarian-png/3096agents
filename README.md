@@ -67,3 +67,17 @@ curl -X POST https://YOUR-DOMAIN.vercel.app/api/agents/ingest \
     "strategy": "arbitrage"
   }'
 ```
+
+## Deployment (Supabase + Vercel)
+
+- Database: existing Supabase project `auralis` — tables live in the isolated
+  `agentos` schema (the shared `public` schema belongs to another app).
+  Apply `supabase/schema.sql` once in the SQL Editor (idempotent).
+- Connect via the pooler as the limited role (transaction mode, port 6543):
+  `postgres://agentos.<project-ref>:<password>@aws-1-eu-central-1.pooler.supabase.com:6543/postgres`
+  (Note: this project's tenant is served by the `aws-1` pooler host, and the
+  connection string must NOT contain `sslmode=` — the app manages TLS itself.)
+- Vercel project `freelance-agent-os` env vars: `DATABASE_URL`, `DIRECT_URL`,
+  `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `AUTH_SECRET`, `MASTER_WALLET_NETWORK`,
+  `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `TELEGRAM_ADMIN_CHAT_ID`.
+- Health check: `GET /api/health` → `{ "ok": true }`.
