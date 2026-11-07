@@ -42,6 +42,7 @@ const JOB_STATUS: Record<string, [string, string]> = {
   failed: ["ناموفق", "bg-red-500/15 text-red-300 border-red-400/30"],
   rejected: ["رد شده", "bg-slate-500/15 text-slate-300 border-slate-400/30"],
   expired: ["منقضی", "bg-slate-500/15 text-slate-400 border-slate-400/30"],
+  needs_config: ["نیازمند تنظیمات", "bg-orange-500/15 text-orange-300 border-orange-400/30"],
 };
 
 export default function OfficeClient({ agentId }: { agentId: number }) {
@@ -143,7 +144,7 @@ export default function OfficeClient({ agentId }: { agentId: number }) {
     }
   }
 
-  async function jobAction(id: number, action: "approve" | "reject") {
+  async function jobAction(id: number, action: "approve" | "reject" | "retry") {
     setBusy(`job-${id}-${action}`);
     try {
       const res = await fetch("/api/jobs", {
@@ -157,6 +158,8 @@ export default function OfficeClient({ agentId }: { agentId: number }) {
         notify(
           action === "reject"
             ? "کار رد شد ❌"
+            : action === "retry"
+            ? "تلاش دوباره انجام شد 🔄"
             : exec?.ok
             ? `کار با موفقیت اجرا شد ✅`
             : `اجرا انجام نشد: ${exec?.error || d.error || "خطا"}`
@@ -324,6 +327,24 @@ export default function OfficeClient({ agentId }: { agentId: number }) {
                 {!infra.exchange.keysConfigured && " ⚠️ کلید API صرافی ست نشده است."}
                 {!infra.exchange.tradingEnabled && " ⚠️ AGENT_TRADING_ENABLED=false است."}
               </p>
+              {!infra.exchange?.canExecuteOrders && (
+                <div className="w-full rounded-xl border border-orange-400/30 bg-orange-500/10 p-2">
+                  <p className="text-[10px] font-black text-orange-300">
+                    🔒 اجرای واقعی آماده نیست — این سفارش فقط «درخواست» ثبت می‌شود و دکمه تأیید آن قفل می‌ماند.
+                  </p>
+                  <ul className="mt-1 space-y-1">
+                    {(infra.exchange?.blockers || []).map((b: any) => (
+                      <li key={b.code} className="text-[9px] leading-4 text-orange-200/90">
+                        • {b.label}
+                        <span className="block text-orange-200/60">↳ {b.action}</span>
+                      </li>
+                    ))}
+                  </ul>
+                  <a href="/control" className="mt-1 inline-block text-[9px] font-bold text-amber-300 underline">
+                    رفتن به پنل صرافی و روشن‌کردن کار واقعی ←
+                  </a>
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -532,14 +553,28 @@ export default function OfficeClient({ agentId }: { agentId: number }) {
                             {JSON.stringify(j.result, null, 1)}
                           </pre>
                         )}
+                        {(j as any).preflight?.blockers?.length > 0 && (
+                          <div className="mt-1 rounded-lg border border-orange-400/30 bg-orange-500/10 p-2">
+                            <p className="text-[10px] font-black text-orange-300">🔒 آماده اجرا نیست: دکمه تأیید قفل است</p>
+                            <ul className="mt-1 space-y-1">
+                              {(j as any).preflight.blockers.map((b: any) => (
+                                <li key={b.code} className="text-[9px] leading-4 text-orange-200/90">
+                                  • {b.label}
+                                  {b.action ? <span className="block text-orange-200/60">↳ {b.action}</span> : null}
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
                         {j.status === "awaiting_approval" && (
                           <div className="mt-2 flex gap-2">
                             <button
                               onClick={() => jobAction(j.id, "approve")}
-                              disabled={busy === `job-${j.id}-approve`}
-                              className="rounded-lg bg-emerald-500 px-3 py-1.5 text-[11px] font-black text-black disabled:opacity-50"
+                              disabled={busy === `job-${j.id}-approve` || (j as any).canApprove === false}
+                              title={(j as any).canApprove === false ? (j as any).preflight?.reason || "این کار آماده اجرا نیست" : ""}
+                              className="rounded-lg bg-emerald-500 px-3 py-1.5 text-[11px] font-black text-black disabled:cursor-not-allowed disabled:opacity-40"
                             >
-                              ✅ تأیید و اجرا
+                              {(j as any).canApprove === false ? "🔒 تأیید قفل است" : "✅ تأیید و اجرا"}
                             </button>
                             <button
                               onClick={() => jobAction(j.id, "reject")}

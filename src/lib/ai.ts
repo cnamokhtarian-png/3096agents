@@ -3,17 +3,41 @@ import { settings } from "@/db/schema";
 import { conf } from "@/lib/config";
 import { ENV } from "@/lib/env";
 
+/**
+ * مدل‌های فعال Gemini (نوامبر ۲۰۲۶).
+ *
+ * ⚠️ نکته‌ی مهم که باعث خطای 404 می‌شد:
+ *   • `gemini-1.5-flash` در ۲۰۲۵ بازنشسته شد.
+ *   • `gemini-2.0-flash` / `gemini-2.0-flash-lite` در ۱ ژوئن ۲۰۲۶ خاموش شدند.
+ *   • `gemini-2.5-flash` در ۲ نوامبر ۲۰۲۶ deprecated شد و از ۱ دسامبر ۲۰۲۶
+ *     فقط به پروژه‌هایی که قبلاً استفاده کرده‌اند سرویس می‌دهد.
+ * پس هر درخواستی به آن شناسه‌ها HTTP 404 برمی‌گرداند. ترتیب زیر از
+ * جدیدترین مدل GA شروع می‌شود و در صورت 404 خودکار به بعدی می‌رود.
+ */
 const FALLBACK_MODELS = [
   "gemini-3.8-flash",
+  "gemini-3.7-flash",
   "gemini-3.5-flash",
-  "gemini-2.5-flash",
-  "gemini-2.0-flash-lite",
-  "gemini-1.5-flash",
+  "gemini-3.5-flash-lite",
 ] as const;
 
+/** مدل‌هایی که هرگز فرستاده نمی‌شوند؛ اگر در env/دیتابیس باشند نادیده گرفته می‌شوند. */
 const RETIRED_MODELS = new Set([
-  "gemini-2.0-flash",
+  "gemini-1.0-pro",
+  "gemini-1.5-flash",
+  "gemini-1.5-flash-8b",
+  "gemini-1.5-flash-001",
+  "gemini-1.5-flash-002",
+  "gemini-1.5-pro",
   "gemini-1.5-pro-001",
+  "gemini-1.5-pro-002",
+  "gemini-2.0-flash",
+  "gemini-2.0-flash-001",
+  "gemini-2.0-flash-lite",
+  "gemini-2.0-flash-lite-001",
+  "gemini-2.0-pro",
+  "gemini-2.5-flash",
+  "gemini-2.5-pro",
 ]);
 
 async function resolveAiCredentials(): Promise<{
@@ -139,5 +163,14 @@ export function activeGeminiModel(): string {
   const raw = conf("GEMINI_MODEL").replace(/^models\//, "").trim();
   if (!raw || RETIRED_MODELS.has(raw)) return FALLBACK_MODELS[0];
   return raw;
+}
+
+/** فهرست مدل‌هایی که به‌ترتیب امتحان می‌شوند (برای نمایش در پنل سیستم). */
+export async function geminiModelPlan(): Promise<{ primary: string; chain: string[] }> {
+  const { models } = await resolveAiCredentials();
+  return {
+    primary: models[0] || FALLBACK_MODELS[0],
+    chain: models.length ? models : [...FALLBACK_MODELS],
+  };
 }
 

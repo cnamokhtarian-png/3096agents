@@ -315,8 +315,28 @@ export default function SystemPage() {
             <h2 className="text-sm font-black">🏦 صرافی</h2>
             <p className="mt-2 text-[11px] leading-5 text-slate-300">{data?.exchange?.message}</p>
             <p className="mt-1 text-[10px] text-slate-500">
-              حالت: {data?.exchange?.mode} • Testnet: {String(data?.exchange?.network === "testnet")}
+              حالت: {data?.exchange?.mode} • شبکه: {data?.exchange?.network} • منبع کلید:{" "}
+              {data?.exchange?.keySource === "env" ? "Vercel Env" : data?.exchange?.keySource === "db" ? "ذخیره‌شده در پنل" : "—"}
             </p>
+            {data?.exchange?.blockers?.length > 0 && (
+              <ul className="mt-2 space-y-1 rounded-xl bg-amber-500/10 p-2">
+                {data.exchange.blockers.map((b: any) => (
+                  <li key={b.code} className="text-[10px] leading-4 text-amber-200">
+                    • {b.label}
+                    <span className="block text-[9px] text-amber-200/70">↳ {b.action}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {data?.ai && (
+              <div className="mt-3 rounded-xl bg-black/30 p-2">
+                <p className="text-[10px] font-black text-slate-200">🧠 مدل هوش مصنوعی</p>
+                <p className="mt-0.5 text-[10px] text-emerald-300" dir="ltr">
+                  {data.ai.plan?.chain?.join(" → ")}
+                </p>
+                <p className="mt-0.5 text-[9px] leading-4 text-slate-400">{data.ai.note}</p>
+              </div>
+            )}
             {data?.exchange?.test && (
               <div className="mt-2 rounded-xl bg-black/30 p-2 text-[10px]">
                 <p className="text-slate-400">تست واقعی:</p>

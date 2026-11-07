@@ -1,78 +1,115 @@
 -- =========================================================================
--- پاک‌سازی داده‌های نمایشی نصب‌های قبلی (Mock / Random)
+-- ریست کامل داده‌های نمایشی/آزمایشی (Mock) → شروع واقعی از صفر
 -- =========================================================================
--- نسخه‌ی قبلی این پروژه در اولین اجرا داده‌های ساختگی (پروژه‌ها، پیام‌ها،
--- تراکنش‌های با هش کوتاه و درآمدهای ثابت) می‌ساخت. این فایل آن‌ها را حذف
--- می‌کند و درآمد هر کارمند را از روی تراکنش‌های واقعیِ باقی‌مانده بازمحاسبه
--- می‌کند. ساختار جدول‌ها و کارمندان و تنظیمات دست‌نخورده می‌مانند.
+-- چه چیزی پاک می‌شود؟
+--   • همه تراکنش‌های درآمد/برداشت با هش ساختگی یا مبلغ نمایشی
+--   • همه لاگ‌ها و دفتر فعالیت (که از اجراهای تستی ساخته شده بودند)
+--   • کل صف کار (Job Queue) شامل کارهای failed قدیمی
+--   • امتیازها و جوایز لیدربورد (score events / monthly awards)
+--   • سیگنال‌ها و پوزیشن‌های paper/تستی
+--   • پروژه‌ها، تسک‌ها و پیام‌های نمونه
+--   • آمار ایجنت‌ها → صفر (درآمد، تعداد تسک، موفق، خطا)
 --
--- اجرا: یک‌بار در SQL Editor سوپابیس. قبل از اجرا از دیتابیس بکاپ بگیرید.
+-- چه چیزی حفظ می‌شود؟
+--   • ساختار جدول‌ها (DDL دست‌نخورده)
+--   • کارمندان و دفترهایشان (فقط شمارنده‌ها صفر می‌شوند)
+--   • کلیدها/تنظیمات واقعی: کیف پول واحد، کلید صرافی، جمینای، تلگرام
+--     (تنظیمات نمایشی/orphan مثل trader_* و leaderboard_* حذف می‌شوند)
+--   • اسنپ‌شات‌های قیمت بازار (داده واقعی بیرونی، نه درآمد)
+--
+-- اجرا: یک‌بار در SQL Editor سوپابیس. کل اسکریپت اتمیک (تراکنش) است.
 -- =========================================================================
 
 BEGIN;
 
--- ۱) تراکنش‌های ساختگی: هش کوتاه یا دارای «...» (هش واقعی ۶۴ کاراکتر هگز است)
-DELETE FROM agentos.transactions
- WHERE kind = 'income'
-   AND (
-     tx_hash = ''
-     OR tx_hash LIKE '%...%'
-     OR tx_hash !~ '^[0-9a-fA-F]{16,}$'
-   );
+-- ۰) حذف کارهای ناموفق/آزمایشی صف (با تریگر تلگرام هم همگام می‌شود)
+DELETE FROM agentos.agent_jobs;
 
--- ۲) سفارش‌ها/لاگ‌های نمایشی
-DELETE FROM agentos.tool_runs
- WHERE output ILIKE '%اسکلت Next.js ساخته شد%'
-    OR output ILIKE '%ارائه PPTX آماده شد%';
+-- ۱) تراکنش‌ها: هیچ درآمد/برداشت قبلی معتبر نبود (همه هش کوتاه/نمایشی داشتند)
+DELETE FROM agentos.transactions;
 
-DELETE FROM agentos.agent_logs
- WHERE detail LIKE '%...%'
-    OR action IN ('اسکن آربیتراژ و واریز به کیف پول واحد', 'دریافت پیام جدید');
+-- ۲) امتیازها و جوایز لیدربورد (اگر جدول‌ها وجود داشته باشند)
+DO $$
+BEGIN
+  IF to_regclass('agentos.agent_score_events') IS NOT NULL THEN
+    EXECUTE 'DELETE FROM agentos.agent_score_events';
+  END IF;
+  IF to_regclass('agentos.agent_monthly_awards') IS NOT NULL THEN
+    EXECUTE 'DELETE FROM agentos.agent_monthly_awards';
+  END IF;
+  IF to_regclass('agentos.trade_signals') IS NOT NULL THEN
+    EXECUTE 'DELETE FROM agentos.trade_signals';
+  END IF;
+  IF to_regclass('agentos.trade_positions') IS NOT NULL THEN
+    EXECUTE 'DELETE FROM agentos.trade_positions';
+  END IF;
+  IF to_regclass('agentos.agent_journal') IS NOT NULL THEN
+    EXECUTE 'DELETE FROM agentos.agent_journal';
+  END IF;
+END
+$$;
 
-DELETE FROM agentos.agent_activity_logs
- WHERE reward_usdt = 0
-   AND tx_hash = ''
-   AND source IN ('system', 'panel')
-   AND action ILIKE '%واریز%';
+-- ۳) سفارش‌های صرافی و لاگ‌های اجرا/ابزار
+DELETE FROM agentos.exchange_orders;
+DELETE FROM agentos.agent_activity_logs;
+DELETE FROM agentos.agent_logs;
+DELETE FROM agentos.tool_runs;
+DELETE FROM agentos.cron_runs;
+DELETE FROM agentos.system_events;
+DELETE FROM agentos.telegram_updates;
 
--- ۳) پیام‌ها/تسک‌های نمونه‌ی قدیمی (اگر می‌خواهید نگه دارید این دو خط را حذف کنید)
-DELETE FROM agentos.messages WHERE chat_id IN ('1001', '1002', '1003', '1004') AND source = 'telegram';
-DELETE FROM agentos.tasks
- WHERE project_title LIKE '%لندینگ پیج Next.js برای صرافی%'
-    OR project_title LIKE '%ترجمه وایت‌پیپر%';
+-- ۴) داده‌های عملیاتی نمونه (پروژه/تسک/پیام)
+DELETE FROM agentos.tasks;
+DELETE FROM agentos.messages;
+DELETE FROM agentos.projects;
 
-DELETE FROM agentos.projects
- WHERE title IN (
-   'لندینگ پیج Next.js برای صرافی رمزارز',
-   'ارائه PPTX سرمایه‌گذاری Web3',
-   'ترجمه وایت‌پیپر FA→EN',
-   'ربات تلگرام فروش اشتراک USDT',
-   'ایجنت AI پشتیبانی فروشگاه',
-   'داشبورد آنالیتیکس NFT'
+-- ۵) شمارنده‌های هر کارمند → صفر (درآمد از این پس فقط از تراکنش تأییدشده)
+UPDATE agentos.agents
+   SET earned_usdt = 0,
+       tasks_completed = 0,
+       success_count = 0,
+       error_count = 0,
+       last_active_at = NULL;
+
+-- ۶) حذف تنظیمات نمایشی/orphan — کلیدهای واقعی دست‌نخورده می‌مانند
+DELETE FROM agentos.settings
+ WHERE key IN (
+   'hitl_financial_lock',      -- با هر استارت‌آپ دوباره ساخته می‌شود
+   'trader_capital_usdt',      -- سرمایه‌ی نمایشی ۲۵۰۰ USDT
+   'trader_mode',              -- paper
+   'trader_enabled',
+   'trader_auto_close',
+   'trader_symbol',
+   'trader_max_open_positions',
+   'trader_max_position_usdt',
+   'trader_max_risk_usdt',
+   'trader_max_leverage',
+   'trader_min_rr',
+   'trader_min_confidence',
+   'trader_min_fear_greed',
+   'trader_max_fear_greed',
+   'trader_max_hold_hours',
+   'trader_max_volatility_pct',
+   'trade_signal_drop_pct',
+   'leaderboard_boost_multiplier',
+   'leaderboard_duration_target',
+   'leaderboard_revenue_target',
+   'leaderboard_weight_revenue',
+   'leaderboard_weight_speed',
+   'leaderboard_weight_success',
+   'a1_last_btc',
+   'a6_last_alert',
+   'bounty_seen',
+   'bot_status',
+   'ticker_at',
+   'ticker_cache'
  );
-
--- ۴) بازمحاسبه درآمد و شمارنده هر کارمند فقط از تراکنش‌های تأییدشده‌ی واقعی
-UPDATE agentos.agents a
-   SET earned_usdt = COALESCE((
-         SELECT SUM(t.amount_usdt)
-           FROM agentos.transactions t
-          WHERE t.agent_name = a.name
-            AND t.kind = 'income'
-            AND t.status = 'confirmed'
-       ), 0),
-       tasks_completed = COALESCE((
-         SELECT COUNT(*)
-           FROM agentos.transactions t
-          WHERE t.agent_name = a.name
-            AND t.kind = 'income'
-            AND t.status = 'confirmed'
-       ), 0);
-
--- ۵) اگر می‌خواهید کل شمارنده‌ها صفر شوند (شروع کاملاً تازه):
--- UPDATE agentos.agents SET earned_usdt = 0, tasks_completed = 0, success_count = 0, error_count = 0;
 
 COMMIT;
 
--- بررسی نتیجه:
+-- بررسی نتیجه (باید همه صفر باشند):
 -- SELECT name, earned_usdt, tasks_completed, success_count, error_count FROM agentos.agents ORDER BY id;
--- SELECT COUNT(*) AS confirmed_income_rows FROM agentos.transactions WHERE status = 'confirmed' AND kind = 'income';
+-- SELECT (SELECT COUNT(*) FROM agentos.transactions) AS tx,
+--        (SELECT COUNT(*) FROM agentos.agent_jobs) AS jobs,
+--        (SELECT COUNT(*) FROM agentos.agent_activity_logs) AS activity,
+--        (SELECT COALESCE(SUM(earned_usdt),0) FROM agentos.agents) AS fleet_total;

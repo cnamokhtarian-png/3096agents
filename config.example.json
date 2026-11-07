@@ -10,16 +10,16 @@
   },
   "telegram": {
     "TELEGRAM_BOT_TOKEN": "",
-    "TELEGRAM_ADMIN_CHAT_ID": "7590237754",
-    "TELEGRAM_CHAT_ID": "7590237754",
+    "TELEGRAM_ADMIN_CHAT_ID": "",
+    "TELEGRAM_CHAT_ID": "",
     "TELEGRAM_BOT_USERNAME": "sina_freelance_agent_bot",
     "TELEGRAM_WEBHOOK_SECRET": "",
     "TELEGRAM_API_BASE": ""
   },
   "database": {
-    "DATABASE_URL": "postgres://postgres:Sina1996**96fgggfdfg@aws-1-eu-central-1.pooler.supabase.com:6543/postgres",
-    "DIRECT_URL": "postgres://postgres:Sina1996**96fgggfdfg@aws-1-eu-central-1.pooler.supabase.com:5432/postgres",
-    "NEXT_PUBLIC_SUPABASE_URL": "https://rvryatkhtakavinbpueh.supabase.co",
+    "DATABASE_URL": "postgres://agentos.PROJECT_REF:YOUR_PASSWORD@aws-1-eu-central-1.pooler.supabase.com:6543/postgres",
+    "DIRECT_URL": "postgres://agentos.PROJECT_REF:YOUR_PASSWORD@aws-1-eu-central-1.pooler.supabase.com:5432/postgres",
+    "NEXT_PUBLIC_SUPABASE_URL": "https://PROJECT_REF.supabase.co",
     "SUPABASE_SERVICE_ROLE_KEY": ""
   },
   "exchange": {

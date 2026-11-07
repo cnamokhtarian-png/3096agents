@@ -17,7 +17,12 @@ import { and, desc, eq, gte, sql } from "drizzle-orm";
 import { ensureSeed, getMasterWallet } from "@/lib/seed";
 import { ENV } from "@/lib/env";
 import { conf } from "@/lib/config";
-import { fetchKlines, fetchPublicPrices } from "@/lib/exchange";
+import {
+  exchangeStatus,
+  fetchKlines,
+  fetchPublicPrices,
+  getAccountBalances,
+} from "@/lib/exchange";
 import { refreshMarket } from "@/lib/market";
 import { buildTechnicalSetup, type TechnicalSetup } from "@/lib/indicators";
 import { scanBountyFeeds } from "@/lib/bounty";
@@ -370,6 +375,22 @@ export async function runAriaMarketScan(options?: { forceCardIfNonePending?: boo
     () => [],
   );
 
+  // موجودی واقعی صرافی: تنها منبع مجاز برای تعیین اندازهٔ پوزیشن.
+  // اگر کلید صرافی ست نشده باشد، هیچ مبلغی «حدس زده» نمی‌شود.
+  let availableUsdt: number | null = null;
+  let balanceNote = "کلید API صرافی ست نشده است؛ موجودی قابل معامله قابل خواندن نیست.";
+  const exState = await exchangeStatus();
+  if (exState.keysConfigured) {
+    try {
+      const acc = await getAccountBalances(["USDT"]);
+      const usdt = acc.balances.find((b: { asset: string }) => b.asset === "USDT");
+      availableUsdt = usdt ? Number(usdt.free) : 0;
+      balanceNote = `موجودی آزاد USDT در صرافی (${exState.exchange} • ${exState.network}): ${availableUsdt}`;
+    } catch (e: any) {
+      balanceNote = `خواندن موجودی صرافی ناموفق بود: ${e?.message || e}`;
+    }
+  }
+
   const symbols = ["BTCUSDT", "ETHUSDT", "TONUSDT"];
   const setups: TechnicalSetup[] = [];
   const errors: string[] = [];
@@ -389,7 +410,8 @@ export async function runAriaMarketScan(options?: { forceCardIfNonePending?: boo
         changePct24h: q?.changePct ?? null,
         source: kl.source,
         maxLeverage: 3,
-        positionUsdt: 150,
+        availableUsdt,
+        riskPct: 2,
       });
       setups.push(setup);
 
@@ -491,8 +513,8 @@ export async function runAriaMarketScan(options?: { forceCardIfNonePending?: boo
         stopPct: best.stopPct,
         riskReward: best.riskReward,
         leverage: best.leverage,
-        positionUsdt: best.positionUsdt,
-        estimatedProfitUsdt: best.estimatedProfitUsdt,
+        positionUsdt: best.positionUsdt ?? 0,
+        estimatedProfitUsdt: best.estimatedProfitUsdt ?? 0,
         estimatedHoursMin: 4,
         estimatedHoursMax: 12,
         confidence: best.confidence,
@@ -533,7 +555,13 @@ export async function runAriaMarketScan(options?: { forceCardIfNonePending?: boo
       agentName: aria.name,
       kind: "trade",
       title: `پیشنهاد ${best.side === "BUY" ? "خرید" : "فروش"} ${best.symbol} (اهرم کنترل‌شده ${best.leverage}x • حد ضرر $${best.stopLoss})`,
-      detail: `${aiReason}\nورود: $${best.entryPrice} | حد ضرر: $${best.stopLoss} | حد سود: $${best.takeProfit} | R/R: ${best.riskReward}`,
+      detail: [
+        aiReason,
+        `ورود: $${best.entryPrice} | حد ضرر: $${best.stopLoss} | حد سود: $${best.takeProfit} | R/R: ${best.riskReward}`,
+        best.positionUsdt !== null
+          ? `مبلغ سفارش: ${best.positionUsdt} USDT (${best.sizingNote})`
+          : `مبلغ سفارش: تعیین نشده — ${best.sizingNote}`,
+      ].join("\n"),
       payload: {
         symbol: best.symbol,
         side: best.side,
@@ -1035,28 +1063,32 @@ export async function buildCooExecutiveSummary(): Promise<CooExecutiveSummary> {
   // ۳. استخراج چالش‌ها و موانع واقعی (API، صرافی، شبکه کیف پول و کلیدهای آن‌چین)
   const blockers: CooBlockerItem[] = [];
 
-  const exchangeHasKeys = Boolean(
-    (ENV.exchangeKey() && ENV.exchangeSecret()) ||
-      (settingsMap.exchange_api_key && settingsMap.exchange_api_secret),
-  );
-  if (!ENV.tradingEnabled() || !exchangeHasKeys) {
-    const dbExName = settingsMap.exchange_name || "binance";
+  // همان منبع حقیقتی که موتور اجرای سفارش استفاده می‌کند (Env + دیتابیس).
+  // قبلاً فقط Env خوانده می‌شد و کلیدهای ذخیره‌شده در پنل دیده نمی‌شدند؛
+  // نتیجه: گزارش COO می‌گفت «قفل است» در حالی که پنل وضعیت دیگری داشت.
+  const exchangeState = await exchangeStatus();
+  if (!exchangeState.canExecuteOrders) {
     blockers.push({
       code: "EXCHANGE_TRADING_LOCKED",
       severity: "warning",
       component: "صرافی و موتور اجرای معاملات (A1 آریا)",
-      title: `قفل اجرای سفارش واقعی صرافی فعال است (AGENT_TRADING_ENABLED=${String(ENV.tradingEnabled())} • Testnet=${String(ENV.exchangeTestnet())})`,
+      title: `قفل اجرای سفارش واقعی صرافی فعال است (کلیدها: ${
+        exchangeState.keysConfigured ? "کامل" : "ناقص"
+      } • AGENT_TRADING_ENABLED=${String(exchangeState.tradingEnabled)} • شبکه=${
+        exchangeState.network
+      })`,
       detail:
-        `موتور تحلیل زنده آریا به کندل‌های واقعی بازار متصل است و کارت پیشنهاد را به تلگرام می‌فرستد، اما ارسال سفارش Spot در صرافی تا فعال‌سازی متغیر AGENT_TRADING_ENABLED=true و تکمیل کلیدهای API صرافی (${dbExName}) مسدود است.`,
+        `موتور تحلیل زنده آریا به کندل‌های واقعی بازار متصل است و کارت پیشنهاد را به تلگرام می‌فرستد، اما ارسال سفارش Spot در صرافی (${exchangeState.exchange}) تا تکمیل کلیدهای API و روشن‌کردن قفل AGENT_TRADING_ENABLED=true مسدود است.`,
       actionRequired:
-        "در صورت تمایل به اجرای خودکار سفارش پس از زدن دکمه [✅]، کلیدهای EXCHANGE_API_KEY / EXCHANGE_SECRET_KEY را بررسی و AGENT_TRADING_ENABLED=true نمایید.",
+        exchangeState.blockers.map((b) => b.action).join(" ") ||
+        "از بخش «کارمندان و دفاتر → صرافی» کلیدها را ذخیره و قفل معامله را باز کنید.",
     });
-  } else if (ENV.exchangeTestnet()) {
+  } else if (exchangeState.network === "testnet") {
     blockers.push({
       code: "EXCHANGE_TESTNET_MODE_ACTIVE",
       severity: "info",
       component: "صرافی و موتور اجرای معاملات (A1 آریا)",
-      title: "متغیر AGENT_TRADING_ENABLED=true فعال است (در حالت ایمن EXCHANGE_TESTNET=true)",
+      title: "ارسال سفارش واقعی فعال است (در حالت ایمن Testnet)",
       detail:
         "توابع اجرایی صرافی (Binance و Tabdeal Spot) به متغیر AGENT_TRADING_ENABLED متصل و آماده ثبت سفارش پس از تأیید [✅] شما هستند. در حال حاضر متغیر EXCHANGE_TESTNET=true روی سرور روشن است.",
       actionRequired:
@@ -1093,7 +1125,7 @@ export async function buildCooExecutiveSummary(): Promise<CooExecutiveSummary> {
       component: "هسته هوش مصنوعی (Gemini Model)",
       title: `مدل منسوخ ${configuredEnvGemini} شناسایی و به‌صورت خودکار به ${activeGeminiModel()} ارتقا یافت`,
       detail:
-        "در لاگ‌های قبلی خطای 404 مدل منسوخ gemini-2.0-flash ثبت شده بود؛ لایه هوشمند RNAI اکنون بدون قطعی به gemini-3.8-flash / gemini-3.5-flash متصل است.",
+        "در لاگ‌های قبلی خطای 404 مدل منسوخ gemini-2.0-flash ثبت شده بود؛ لایه هوشمند RNAI اکنون بدون قطعی به gemini-3.8-flash / gemini-3.7-flash / gemini-3.5-flash متصل است.",
       actionRequired: "نیاز به اقدام فوری نیست (متغیر محیطی سرور نیز به gemini-3.8-flash به‌روزرسانی شد).",
     });
   }

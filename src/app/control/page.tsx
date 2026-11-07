@@ -39,11 +39,20 @@ const specialtyMap: Record<string, string> = {
 
 const tradeStatus: Record<string, [string, string]> = {
   awaiting_approval: ["منتظر تأیید", "bg-amber-500/15 text-amber-300 border-amber-400/30"],
+  approved: ["تأییدشده", "bg-sky-500/15 text-sky-300 border-sky-400/30"],
+  running: ["در حال اجرا", "bg-cyan-500/15 text-cyan-300 border-cyan-400/30"],
   succeeded: ["موفق", "bg-emerald-500/15 text-emerald-300 border-emerald-400/30"],
   failed: ["ناموفق", "bg-red-500/15 text-red-300 border-red-400/30"],
   rejected: ["رد شده", "bg-slate-500/15 text-slate-300 border-slate-400/30"],
   queued: ["در صف", "bg-slate-500/15 text-slate-300 border-slate-400/30"],
+  needs_config: ["نیازمند تنظیمات", "bg-orange-500/15 text-orange-300 border-orange-400/30"],
+  expired: ["منقضی", "bg-slate-500/15 text-slate-400 border-slate-400/30"],
 };
+
+/** کارهایی که واقعاً آماده اجرا هستند (پیش‌بررسی سرور). */
+const isApprovable = (j: any) => Boolean(j?.canApprove);
+/** آیا وضعیت کار «قابل تصمیم» است؟ (کارهای failed/needs_config دکمه تلاش دوباره دارند) */
+const JOB_DECIDABLE = ["awaiting_approval", "queued"];
 
 export default function Control() {
   const [view, setView] = useState("hq");
@@ -104,6 +113,11 @@ export default function Control() {
 
   // کیف پول و کارمند جدید
   const [walletForm, setWalletForm] = useState({ address: "", network: "USDT-TRC20", autoSweep: true });
+  // تنظیمات واقعی صرافی (کار واقعی)
+  const [exInfo, setExInfo] = useState<any>(null);
+  const [exForm, setExForm] = useState({ apiKey: "", apiSecret: "", testnet: true });
+  const [exTest, setExTest] = useState<any>(null);
+
   const [newAgent, setNewAgent] = useState({
     name: "",
     role: "",
@@ -137,6 +151,10 @@ export default function Control() {
       fetch("/api/jobs").then((r) => r.json()).catch(() => []),
       fetch("/api/coo").then((r) => r.json()).catch(() => null),
     ]);
+    fetch("/api/exchange")
+      .then((r) => r.json())
+      .then((d) => d?.ok && setExInfo(d))
+      .catch(() => {});
     setProjects(Array.isArray(p) ? p : []);
     setTasks(Array.isArray(t) ? t : []);
     setMsgs(Array.isArray(m) ? m : []);
@@ -296,12 +314,15 @@ export default function Control() {
     }
   }
 
-  async function jobAction(id: number, action: "approve" | "reject") {
+  async function jobAction(id: number, action: "approve" | "reject" | "retry") {
     setBusy(`job-${id}`);
     try {
       const d = await api("/api/jobs", "PATCH", { id, action });
       if (action === "reject") notify("کار رد شد ❌");
-      else if (d.execution?.ok) notify("کار با موفقیت اجرا شد ✅");
+      else if (action === "retry") {
+        if (d.ok) notify("اجرای دوباره با موفقیت انجام شد ✅");
+        else notify(`⚠️ اجرای دوباره ناموفق: ${d.execution?.error || d.error || ""}`);
+      } else if (d.execution?.ok) notify("کار با موفقیت اجرا شد ✅");
       else notify(`⚠️ اجرا ناموفق: ${d.execution?.error || d.error || ""}`);
       await load();
     } catch (err: any) {
@@ -399,6 +420,59 @@ export default function Control() {
       notify("کارمند حذف شد 🗑️");
       await load();
     } catch (err: any) {
+      notify(`⚠️ ${err.message}`);
+    }
+  }
+
+  async function saveExchange(e: any) {
+    e.preventDefault();
+    try {
+      const body: any = {};
+      if (exForm.apiKey.trim()) body.apiKey = exForm.apiKey.trim();
+      if (exForm.apiSecret.trim()) body.apiSecret = exForm.apiSecret.trim();
+      body.testnet = exForm.testnet;
+      const d = await api("/api/exchange", "PUT", body);
+      if (d.ok) {
+        notify(
+          `کلیدهای صرافی ذخیره شد ✅ — حالت: ${d.status?.mode} • ` +
+            (d.status?.canExecuteOrders ? "ارسال سفارش واقعی فعال است" : "تا روشن‌کردن قفل معامله، سفارش ارسال نمی‌شود")
+        );
+        setExForm({ apiKey: "", apiSecret: "", testnet: exForm.testnet });
+        await load();
+      }
+    } catch (err: any) {
+      notify(`⚠️ ${err.message}`);
+    }
+  }
+
+  async function toggleRealTrading(next: boolean) {
+    const msg = next
+      ? "با فعال‌سازی، هر سفارشی که شما در پنل/تلگرام تأیید کنید به‌صورت واقعی به صرافی ارسال می‌شود. مطمئن هستید؟"
+      : "ارسال سفارش واقعی قفل شود؟";
+    if (!confirm(msg)) return;
+    try {
+      const d = await api("/api/exchange", "PUT", {
+        tradingEnabled: next,
+        confirm: next ? "ENABLE_REAL_TRADING" : undefined,
+      });
+      if (d.ok) {
+        notify(next ? "ارسال سفارش واقعی فعال شد ⚠️ (هر سفارش هنوز نیاز به تأیید شما دارد)" : "ارسال سفارش واقعی قفل شد 🔒");
+        await load();
+      }
+    } catch (err: any) {
+      notify(`⚠️ ${err.message}`);
+    }
+  }
+
+  async function testExchangeConnection() {
+    setExTest({ loading: true });
+    try {
+      const d = await api("/api/exchange", "POST", {});
+      setExTest(d);
+      notify(d.ok ? "اتصال واقعی صرافی تأیید شد ✅" : `⚠️ اتصال ناقص: ${d.test?.accountError || d.test?.priceError || ""}`);
+      await load();
+    } catch (err: any) {
+      setExTest({ error: err.message });
       notify(`⚠️ ${err.message}`);
     }
   }
@@ -776,11 +850,17 @@ export default function Control() {
                         <span className="rounded-full border px-2 py-0.5 text-[9px] text-slate-500">{j.kind}</span>
                       </div>
                       <p className="mt-1 text-[10px] text-slate-500">{j.agentName}</p>
+                      {!isApprovable(j) && j.preflight?.blockers?.length > 0 && (
+                        <p className="mt-1 rounded-lg bg-orange-50 px-2 py-1 text-[9px] leading-4 text-orange-700">
+                          🔒 قفل: {j.preflight.blockers.map((b: any) => b.label).join(" • ")}
+                        </p>
+                      )}
                       <div className="mt-2 flex gap-2">
                         <button
                           onClick={() => jobAction(j.id, "approve")}
-                          disabled={busy === `job-${j.id}`}
-                          className="rounded-lg bg-emerald-500 px-3 py-1 text-[11px] font-black text-white disabled:opacity-50"
+                          disabled={busy === `job-${j.id}` || !isApprovable(j)}
+                          title={isApprovable(j) ? "" : j.preflight?.reason || "این کار آماده اجرا نیست"}
+                          className="rounded-lg bg-emerald-500 px-3 py-1 text-[11px] font-black text-white disabled:cursor-not-allowed disabled:opacity-40"
                         >
                           تأیید و اجرا ✅
                         </button>
@@ -903,6 +983,130 @@ export default function Control() {
                     </div>
                   </div>
                 </form>
+
+                {/* ── کار واقعی: کلید صرافی + قفل معامله ─────────────── */}
+                <div className="rounded-3xl border border-amber-200 bg-amber-50/40 p-5">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <h3 className="font-black">🏦 صرافی و روشن‌کردن کار واقعی</h3>
+                    <span
+                      className={`rounded-full px-2.5 py-0.5 text-[10px] font-black ${
+                        exInfo?.status?.canExecuteOrders
+                          ? "bg-emerald-100 text-emerald-700"
+                          : "bg-orange-100 text-orange-700"
+                      }`}
+                    >
+                      {exInfo?.status?.canExecuteOrders
+                        ? `آماده ارسال سفارش واقعی (${exInfo?.status?.network})`
+                        : "ارسال سفارش قفل است"}
+                    </span>
+                  </div>
+                  <p className="mt-1 text-[11px] leading-5 text-slate-600">
+                    {exInfo?.status?.message || "وضعیت صرافی در حال خواندن است…"}
+                  </p>
+
+                  {/* چراغ‌های وضعیت */}
+                  <div className="mt-3 grid grid-cols-2 gap-2 text-[10px]">
+                    <div className="rounded-xl bg-white p-2">
+                      <p className="text-slate-500">کلید API</p>
+                      <b className={exInfo?.status?.keysConfigured ? "text-emerald-600" : "text-red-600"}>
+                        {exInfo?.keys?.apiKeyPreview || "ست نشده"}
+                      </b>
+                      <p className="text-[9px] text-slate-400">
+                        منبع: {exInfo?.keys?.apiKeySource === "env" ? "Vercel Env" : exInfo?.keys?.apiKeySource === "db" ? "ذخیره‌شده در پنل" : "—"}
+                      </p>
+                    </div>
+                    <div className="rounded-xl bg-white p-2">
+                      <p className="text-slate-500">قفل معامله (AGENT_TRADING_ENABLED)</p>
+                      <b className={exInfo?.status?.tradingEnabled ? "text-emerald-600" : "text-red-600"}>
+                        {exInfo?.status?.tradingEnabled ? "باز — ارسال واقعی" : "بسته — ارسال واقعی ممنوع"}
+                      </b>
+                      <p className="text-[9px] text-slate-400">
+                        شبکه: {exInfo?.keys?.testnet ? "Testnet (پیش‌فرض امن)" : "Mainnet ⚠️"}
+                      </p>
+                    </div>
+                  </div>
+
+                  {exInfo?.status?.blockers?.length > 0 && (
+                    <ul className="mt-2 space-y-1 rounded-xl bg-white p-2">
+                      {exInfo.status.blockers.map((b: any) => (
+                        <li key={b.code} className="text-[10px] leading-4 text-orange-700">
+                          • {b.label}
+                          <span className="block text-[9px] text-slate-500">↳ {b.action}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+
+                  <form onSubmit={saveExchange} className="mt-3 space-y-2">
+                    <input
+                      value={exForm.apiKey}
+                      onChange={(e) => setExForm({ ...exForm, apiKey: e.target.value })}
+                      placeholder="EXCHANGE_API_KEY (خالی بگذارید تا تغییر نکند)"
+                      dir="ltr"
+                      autoComplete="off"
+                      className="w-full rounded-xl border p-2.5 font-mono text-xs"
+                    />
+                    <input
+                      value={exForm.apiSecret}
+                      onChange={(e) => setExForm({ ...exForm, apiSecret: e.target.value })}
+                      placeholder="EXCHANGE_SECRET_KEY (خالی بگذارید تا تغییر نکند)"
+                      dir="ltr"
+                      type="password"
+                      autoComplete="off"
+                      className="w-full rounded-xl border p-2.5 font-mono text-xs"
+                    />
+                    <div className="flex flex-wrap items-center gap-2">
+                      <label className="flex items-center gap-1 rounded-xl bg-white px-2.5 py-1.5 text-[10px] font-bold">
+                        <input
+                          type="checkbox"
+                          checked={exForm.testnet}
+                          onChange={(e) => setExForm({ ...exForm, testnet: e.target.checked })}
+                        />
+                        Testnet (توصیه‌شده)
+                      </label>
+                      <button className="rounded-xl bg-slate-900 px-3.5 py-2 text-xs font-bold text-white">
+                        💾 ذخیره کلیدهای صرافی
+                      </button>
+                      <button
+                        type="button"
+                        onClick={testExchangeConnection}
+                        className="rounded-xl border bg-white px-3.5 py-2 text-xs font-bold"
+                      >
+                        {exTest?.loading ? "⏳ تست…" : "🔍 تست واقعی اتصال"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => toggleRealTrading(!exInfo?.status?.tradingEnabled)}
+                        className={`rounded-xl px-3.5 py-2 text-xs font-black ${
+                          exInfo?.status?.tradingEnabled
+                            ? "bg-red-100 text-red-700"
+                            : "bg-amber-400 text-black"
+                        }`}
+                      >
+                        {exInfo?.status?.tradingEnabled ? "🔒 قفل ارسال سفارش" : "⚠️ باز کردن قفل ارسال واقعی"}
+                      </button>
+                    </div>
+                  </form>
+
+                  {exTest && !exTest.loading && (
+                    <pre className="mt-2 max-h-32 overflow-auto rounded-xl bg-white p-2 text-[9px] text-slate-600" dir="ltr">
+                      {JSON.stringify(
+                        {
+                          price: exTest.test?.prices?.[0]?.price ?? null,
+                          priceError: exTest.test?.priceError,
+                          balances: exTest.test?.account?.balances ?? null,
+                          accountError: exTest.test?.accountError,
+                        },
+                        null,
+                        1
+                      )}
+                    </pre>
+                  )}
+                  <p className="mt-2 text-[9px] leading-4 text-slate-500">
+                    قفل HITL: حتی با باز بودن این کلید، هیچ سفارشی بدون تأیید شما در پنل یا تلگرام ارسال نمی‌شود.
+                    کلیدها فقط در دیتابیس همین پروژه ذخیره می‌شوند و در گیت نوشته نمی‌شوند.
+                  </p>
+                </div>
 
                 <form onSubmit={createNewAgent} className="rounded-3xl border bg-white p-5">
                   <h3 className="font-black">➕ استخدام کارمند و افتتاح دفتر جدید</h3>
@@ -1265,19 +1469,47 @@ export default function Control() {
                           )}
                         </div>
                       )}
+                      {j.preflight?.blockers?.length > 0 && (
+                        <div className="mt-2 rounded-xl border border-orange-200 bg-orange-50 p-2">
+                          <p className="text-[10px] font-black text-orange-800">🔒 این کار آماده اجرای واقعی نیست — دکمه تأیید قفل است:</p>
+                          <ul className="mt-1 space-y-1">
+                            {j.preflight.blockers.map((b: any) => (
+                              <li key={b.code} className="text-[9px] leading-4 text-orange-700">
+                                • {b.label}
+                                {b.action ? <span className="block text-orange-600/80">↳ {b.action}</span> : null}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
                       {j.error && <p className="mt-1 rounded bg-red-50 p-2 text-[10px] text-red-600">⛔ {j.error}</p>}
-                      {j.status === "awaiting_approval" && (
-                        <div className="mt-2 flex gap-2">
+                      {["awaiting_approval", "queued"].includes(j.status) && (
+                        <div className="mt-2 flex flex-wrap gap-2">
                           <button
                             onClick={() => jobAction(j.id, "approve")}
-                            disabled={busy === `job-${j.id}`}
-                            className="rounded-lg bg-emerald-500 px-3 py-1 text-[11px] font-black text-white disabled:opacity-50"
+                            disabled={busy === `job-${j.id}` || !isApprovable(j)}
+                            title={isApprovable(j) ? "" : j.preflight?.reason || "این کار آماده اجرا نیست"}
+                            className="rounded-lg bg-emerald-500 px-3 py-1 text-[11px] font-black text-white disabled:cursor-not-allowed disabled:opacity-40"
                           >
-                            ✅ تأیید و اجرا
+                            {isApprovable(j) ? "✅ تأیید و اجرا" : "🔒 تأیید قفل است"}
                           </button>
                           <button onClick={() => jobAction(j.id, "reject")} className="rounded-lg bg-red-50 px-3 py-1 text-[11px] font-bold text-red-600">
                             ❌ رد
                           </button>
+                        </div>
+                      )}
+                      {j.canRetry && (
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          <button
+                            onClick={() => jobAction(j.id, "retry")}
+                            disabled={busy === `job-${j.id}`}
+                            className="rounded-lg bg-slate-900 px-3 py-1 text-[11px] font-black text-white disabled:opacity-40"
+                          >
+                            🔄 تلاش دوباره
+                          </button>
+                          <span className="text-[9px] leading-5 text-slate-500">
+                            تلاش دوباره فقط وقتی موفق می‌شود که علت خطا (کلید/تنظیمات) رفع شده باشد.
+                          </span>
                         </div>
                       )}
                     </li>

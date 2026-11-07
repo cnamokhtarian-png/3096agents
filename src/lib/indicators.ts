@@ -113,9 +113,14 @@ export type TechnicalSetup = {
   targetPct: number;
   riskReward: number;
   leverage: number;
-  positionUsdt: number;
-  maxLossUsdt: number;
-  estimatedProfitUsdt: number;
+  /** مبلغ پیشنهادی سفارش — فقط اگر موجودی واقعی صرافی خوانده شده باشد */
+  positionUsdt: number | null;
+  maxLossUsdt: number | null;
+  estimatedProfitUsdt: number | null;
+  /** منبع مبلغ: موجودی واقعی صرافی یا نامشخص */
+  sizingSource: "exchange_balance" | "unavailable";
+  /** چرا مبلغ مشخص نشده (برای نمایش به مدیرعامل) */
+  sizingNote: string;
   estimatedDuration: string;
   confidence: number;
   rsi: number;
@@ -143,7 +148,10 @@ export function buildTechnicalSetup(input: {
   changePct24h: number | null;
   source: string;
   maxLeverage?: number;
-  positionUsdt?: number;
+  /** موجودی واقعی USDT قابل استفاده در صرافی (اگر خوانده شده باشد) */
+  availableUsdt?: number | null;
+  /** حداکثر درصد سرمایه برای هر معامله (پیش‌فرض ۲٪) */
+  riskPct?: number;
 }): TechnicalSetup {
   const { symbol, candles, livePrice, changePct24h, source } = input;
   const closes = candles.map((c) => c.close);
@@ -235,9 +243,33 @@ export function buildTechnicalSetup(input: {
   const safeLev = volatilityPct > 2.5 ? 1 : volatilityPct > 1.5 ? Math.min(2, capLev) : Math.min(3, capLev);
   const leverage = Math.max(1, safeLev);
 
-  const positionUsdt = Math.max(50, Math.min(500, Math.round(input.positionUsdt ?? 300)));
-  const maxLossUsdt = Math.round(positionUsdt * (stopPct / 100) * leverage * 100) / 100;
-  const estimatedProfitUsdt = Math.round(positionUsdt * (targetPct / 100) * leverage * 100) / 100;
+  // ⛔ هیچ مبلغ ساختگی: اندازهٔ پوزیشن فقط از موجودی واقعی صرافی و
+  // درصد ریسک تنظیم‌شده محاسبه می‌شود. اگر موجودی خوانده نشده باشد،
+  // مبلغ null می‌ماند تا مدیرعامل خودش آن را وارد کند.
+  const available =
+    input.availableUsdt !== undefined && input.availableUsdt !== null
+      ? Number(input.availableUsdt)
+      : null;
+  const riskPct = Math.min(20, Math.max(0.1, Number(input.riskPct ?? 2)));
+  const positionUsdt =
+    available !== null && Number.isFinite(available) && available > 0
+      ? Math.round(available * (riskPct / 100) * 100) / 100
+      : null;
+  const sizingSource: "exchange_balance" | "unavailable" =
+    positionUsdt !== null ? "exchange_balance" : "unavailable";
+  const sizingNote =
+    positionUsdt !== null
+      ? `${riskPct}٪ از موجودی واقعی صرافی (${available} USDT)`
+      : "موجودی واقعی صرافی در دسترس نیست (کلید API صرافی ست نشده)؛ مبلغ را خودتان تعیین کنید.";
+
+  const maxLossUsdt =
+    positionUsdt !== null
+      ? Math.round(positionUsdt * (stopPct / 100) * leverage * 100) / 100
+      : null;
+  const estimatedProfitUsdt =
+    positionUsdt !== null
+      ? Math.round(positionUsdt * (targetPct / 100) * leverage * 100) / 100
+      : null;
 
   // تخمین زمان رسیدن به تارگت بر اساس میانگین دامنه کندل یک‌ساعته (ATR)
   const estHours = Math.max(2, Math.min(24, Math.round(targetDist / Math.max(atrVal * 0.55, price * 0.003))));
@@ -263,6 +295,8 @@ export function buildTechnicalSetup(input: {
     positionUsdt,
     maxLossUsdt,
     estimatedProfitUsdt,
+    sizingSource,
+    sizingNote,
     estimatedDuration,
     confidence,
     rsi: rsiVal,

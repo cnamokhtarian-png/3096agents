@@ -133,7 +133,7 @@ export async function GET(req: NextRequest) {
       const failed24h = recentActivity.filter(
         (a) => a.status === "failed",
       ).length;
-      const exchange = exchangeStatus();
+      const exchange = await exchangeStatus();
 
       return NextResponse.json({
         projects: p.length,

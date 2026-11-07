@@ -15,6 +15,7 @@ import { currentUser, guardAdmin } from "@/lib/auth";
 import { ensureSeed } from "@/lib/seed";
 import { conf } from "@/lib/config";
 import { safeRoute } from "@/lib/api-response";
+import { geminiModelPlan } from "@/lib/ai";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -128,7 +129,12 @@ export async function GET(req: NextRequest) {
         ok: Boolean(dbCheck.ok) && audit.missingRequired.length === 0,
         env: audit,
         database: dbCheck,
-        exchange: { ...exchangeStatus(), test: exchangeTest },
+        exchange: { ...(await exchangeStatus()), test: exchangeTest },
+        ai: {
+          configured: Boolean(conf("GEMINI_API_KEY")),
+          plan: await geminiModelPlan(),
+          note: "مدل‌های 1.5/2.0/2.5 Flash بازنشسته شده‌اند و 404 می‌دهند؛ این‌ها هرگز استفاده نمی‌شوند.",
+        },
         telegram: {
           configured: telegramConfigured(),
           webhook: (webhook as any).ok

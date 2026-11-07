@@ -16,6 +16,11 @@ import { ENV } from "@/lib/env";
 import { guardAdmin } from "@/lib/auth";
 import { conf } from "@/lib/config";
 import { safeRoute } from "@/lib/api-response";
+import {
+  preflightJobKind,
+  statusLabel,
+  type JobKind,
+} from "@/lib/job-preflight";
 
 export const dynamic = "force-dynamic";
 
@@ -50,7 +55,7 @@ export async function GET(
       if (!agent)
         return NextResponse.json({ error: "کارمند پیدا نشد" }, { status: 404 });
 
-      const [activity, jobs, logs, txs, wallet] = await Promise.all([
+      const [activity, jobs, logs, txs, wallet, exchange] = await Promise.all([
         db
           .select()
           .from(agentActivityLogs)
@@ -79,6 +84,7 @@ export async function GET(
           .orderBy(desc(transactions.createdAt), desc(transactions.id))
           .limit(25),
         getMasterWallet(),
+        exchangeStatus(),
       ]);
 
       const market = await getMarketOverview(undefined, {
@@ -133,13 +139,31 @@ export async function GET(
         },
         income: { confirmed: confirmedIncome, pending: pendingIncome },
         activity,
-        jobs,
+        jobs: await Promise.all(
+          jobs.map(async (j) => {
+            const decidable = ["awaiting_approval", "queued"].includes(j.status);
+            const preflight = decidable
+              ? await preflightJobKind(
+                  j.kind as JobKind,
+                  (j.payload || {}) as Record<string, any>,
+                  { exchange: exchange },
+                )
+              : null;
+            return {
+              ...j,
+              statusLabel: statusLabel(j.status),
+              canApprove: Boolean(decidable && preflight?.ready),
+              canRetry: ["failed", "expired", "needs_config"].includes(j.status),
+              preflight,
+            };
+          }),
+        ),
         logs,
         transactions: txs,
         wallet,
         market,
         infra: {
-          exchange: exchangeStatus(),
+          exchange,
           telegram: {
             configured: telegramConfigured(),
             adminChat: Boolean(ENV.telegramAdminChat()),

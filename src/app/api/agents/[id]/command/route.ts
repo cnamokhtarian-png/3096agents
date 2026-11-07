@@ -8,6 +8,7 @@ import { refreshMarket } from "@/lib/market";
 import { exchangeStatus, getAccountBalances } from "@/lib/exchange";
 import { recordAgentError } from "@/lib/agent-execution";
 import { ConfigError } from "@/lib/env";
+import { preflightJobKind } from "@/lib/job-preflight";
 
 export const dynamic = "force-dynamic";
 
@@ -45,8 +46,10 @@ export async function POST(
       const market = await refreshMarket();
       let account: Awaited<ReturnType<typeof getAccountBalances>> | null = null;
       let accountError: string | null = null;
-      const ex = exchangeStatus();
-      if (ex.keysConfigured && ex.tradingEnabled) {
+      const ex = await exchangeStatus();
+      // خواندن موجودی فقط به کلید نیاز دارد، نه به فلگ معامله؛
+      // پس گزارش واقعی بازار حتی وقتی ارسال سفارش قفل است کامل می‌شود.
+      if (ex.keysConfigured) {
         try {
           account = await getAccountBalances(["USDT"]);
         } catch (e: any) {
@@ -111,6 +114,15 @@ export async function POST(
         );
       }
 
+      // پیش‌بررسی: اگر کلید صرافی/قفل معامله آماده نیست، همان‌جا با
+      // پیام شفاف برگرد تا کار بی‌فایده در صف ساخته نشود.
+      const exchange = await exchangeStatus();
+      const preflight = await preflightJobKind(
+        "trade",
+        { symbol, side, quoteOrderQty, quantity },
+        { exchange },
+      );
+
       const { job, telegram } = await createJob({
         agentId: agent.id,
         agentName: agent.name,
@@ -127,9 +139,13 @@ export async function POST(
         ok: true,
         job,
         telegram,
-        message: telegram.ok
-          ? "درخواست در تلگرام برای تأیید ارسال شد."
-          : "درخواست در صف تأیید پنل ثبت شد (تلگرام پیکربندی نشده).",
+        ready: preflight.ready,
+        blockers: preflight.blockers,
+        message: preflight.ready
+          ? telegram.ok
+            ? "درخواست در تلگرام برای تأیید ارسال شد."
+            : "درخواست در صف تأیید پنل ثبت شد (تلگرام پیکربندی نشده)."
+          : `درخواست ثبت شد اما هنوز آماده اجرا نیست: ${preflight.reason} — پس از رفع، دکمه «تلاش دوباره» را بزنید.`,
       });
     }
 

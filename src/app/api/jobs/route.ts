@@ -8,6 +8,8 @@ import {
   retryJob,
 } from "@/lib/jobs";
 import { safeRoute } from "@/lib/api-response";
+import { exchangeStatus } from "@/lib/exchange";
+import { preflightJobKind, statusLabel, type JobKind } from "@/lib/job-preflight";
 
 export const dynamic = "force-dynamic";
 
@@ -24,7 +26,31 @@ export async function GET(req: NextRequest) {
         status: status ? status.split(",").filter(Boolean) : undefined,
         limit: Number(u.searchParams.get("limit") || 100),
       });
-      return NextResponse.json(rows);
+
+      // برای هر کار «قابل تصمیم» یک پیش‌بررسی واقعی می‌فرستیم تا پنل
+      // دکمه تأیید را فقط برای کارهای سالم فعال کند و دلیل قفل را نشان دهد.
+      const ex = await exchangeStatus();
+      const enriched = await Promise.all(
+        rows.map(async (j) => {
+          const decidable = ["awaiting_approval", "queued"].includes(j.status);
+          const preflight = decidable
+            ? await preflightJobKind(
+                j.kind as JobKind,
+                (j.payload || {}) as Record<string, any>,
+                { exchange: ex },
+              )
+            : null;
+          return {
+            ...j,
+            statusLabel: statusLabel(j.status),
+            canApprove: Boolean(decidable && preflight?.ready),
+            canRetry: ["failed", "expired", "needs_config"].includes(j.status),
+            canReject: ["awaiting_approval", "queued"].includes(j.status),
+            preflight,
+          };
+        }),
+      );
+      return NextResponse.json(enriched, { headers: { "Cache-Control": "no-store" } });
     },
     {
       logLabel: "src/app/api/jobs/route.ts#GET",

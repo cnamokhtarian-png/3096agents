@@ -129,7 +129,7 @@ export async function buildAgentFacts(agentId: number) {
       createdAt: a.createdAt,
     })),
     legacyLogs: legacyLogs.slice(0, 8),
-    exchange: exchangeStatus(),
+    exchange: await exchangeStatus(),
     market,
   };
 }

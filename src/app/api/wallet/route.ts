@@ -46,7 +46,7 @@ export async function GET(req: NextRequest) {
         .reduce((s, t) => s + Math.abs(Number(t.amountUsdt)), 0);
 
       // موجودی واقعی صرافی فقط اگر کلید و اجازه معامله/خواندن باشد
-      const ex = exchangeStatus();
+      const ex = await exchangeStatus();
       let exchangeBalance:
         | { asset: string; total: number; free: number; locked: number }[]
         | null = null;

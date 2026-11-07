@@ -64,17 +64,30 @@ function publicBaseUrl() {
   return conf("EXCHANGE_BASE_URL").replace(/\/$/, "") || LIVE_BASE;
 }
 
-async function resolveRuntimeExchangeConfig(): Promise<{
+export type ExchangeKeySource = "env" | "db" | "none";
+
+export type ExchangeRuntimeConfig = {
   apiKey: string;
   apiSecret: string;
   exchangeName: "binance" | "tabdeal";
   tradingEnabled: boolean;
   testnet: boolean;
-}> {
+  apiKeySource: ExchangeKeySource;
+  apiSecretSource: ExchangeKeySource;
+  tradingFlagSource: ExchangeKeySource;
+};
+
+/**
+ * منبع حقیقت واحد برای وضعیت صرافی.
+ * کلیدها از Vercel Env و سپس از پرونده‌ی تنظیمات دیتابیس خوانده می‌شوند
+ * (تا با بازنویسی کد گم نشوند) و فلگ AGENT_TRADING_ENABLED هم از هر دو مسیر.
+ */
+export async function resolveExchangeConfig(): Promise<ExchangeRuntimeConfig> {
   let dbKey = "";
   let dbSecret = "";
   let dbExchange = "";
   let dbTrading = "";
+  let dbTestnet = "";
   try {
     const rows = await db.select().from(settings);
     const map = new Map(rows.map((r) => [r.key, r.value]));
@@ -82,58 +95,143 @@ async function resolveRuntimeExchangeConfig(): Promise<{
     dbSecret = (map.get("exchange_api_secret") || "").trim();
     dbExchange = (map.get("exchange_name") || "").trim().toLowerCase();
     dbTrading = (map.get("agent_trading_enabled") || "").trim().toLowerCase();
+    dbTestnet = (map.get("exchange_testnet") || "").trim().toLowerCase();
   } catch {
     // در صورت خطای موقت دیتابیس، فقط از متغیرهای محیطی استفاده می‌شود
   }
 
-  const apiKey = ENV.exchangeKey() || dbKey;
-  const apiSecret = ENV.exchangeSecret() || dbSecret;
+  const envKey = ENV.exchangeKey();
+  const envSecret = ENV.exchangeSecret();
+  const apiKey = envKey || dbKey;
+  const apiSecret = envSecret || dbSecret;
   const envEx = conf("EXCHANGE_NAME").trim().toLowerCase();
   const baseOverride = conf("EXCHANGE_BASE_URL").trim().toLowerCase();
   const isTabdeal =
     baseOverride.includes("tabdeal") ||
     envEx === "tabdeal" ||
-    (!envEx && !baseOverride && dbExchange === "tabdeal" && !ENV.exchangeKey() && Boolean(dbKey));
+    (!envEx && !baseOverride && dbExchange === "tabdeal" && !envKey && Boolean(dbKey));
 
   // اتصال مستقیم به متغیر AGENT_TRADING_ENABLED در Vercel (با پشتیبانی از فلگ دیتابیس)
-  const tradingEnabled =
-    ENV.tradingEnabled() || ["true", "1", "yes", "on"].includes(dbTrading);
+  const envTrading = ENV.tradingEnabled();
+  const dbTradingOn = ["true", "1", "yes", "on"].includes(dbTrading);
+
+  // پیش‌فرض امن: تا وقتی صریحاً EXCHANGE_TESTNET=false نشده، همه چیز Testnet است.
+  // (با این کار روشن‌کردن AGENT_TRADING_ENABLED به‌تنهایی هرگز پول واقعی را
+  //  به خطر نمی‌اندازد؛ برای Mainnet باید کاربرها صریحاً false بگذارند.)
+  const rawTestnet = conf("EXCHANGE_TESTNET").trim().toLowerCase() || dbTestnet;
+  const testnet = rawTestnet
+    ? !["false", "0", "no", "off"].includes(rawTestnet)
+    : true;
 
   return {
     apiKey,
     apiSecret,
     exchangeName: isTabdeal ? "tabdeal" : "binance",
-    tradingEnabled,
-    testnet: isTabdeal ? false : ENV.exchangeTestnet(),
+    tradingEnabled: envTrading || dbTradingOn,
+    testnet: isTabdeal ? false : testnet,
+    apiKeySource: envKey ? "env" : dbKey ? "db" : "none",
+    apiSecretSource: envSecret ? "env" : dbSecret ? "db" : "none",
+    tradingFlagSource: envTrading ? "env" : dbTradingOn ? "db" : "none",
   };
 }
 
-export function exchangeStatus() {
-  const hasKeys = Boolean(ENV.exchangeKey() && ENV.exchangeSecret());
-  const testnet = ENV.exchangeTestnet();
-  const enabled = ENV.tradingEnabled();
+export type ExchangeBlocker = {
+  code: "missing_api_key" | "missing_api_secret" | "trading_flag_off";
+  label: string;
+  missing: string[];
+  action: string;
+};
+
+export type ExchangeStatus = {
+  exchange: "binance" | "tabdeal";
+  network: "testnet" | "mainnet";
+  keysConfigured: boolean;
+  tradingEnabled: boolean;
+  /** true یعنی با زدن دکمه تأیید، سفارش واقعاً ارسال می‌شود. */
+  canExecuteOrders: boolean;
+  mode: "not_configured" | "read-only" | "testnet-trading" | "live-trading";
+  keySource: ExchangeKeySource;
+  blockers: ExchangeBlocker[];
+  message: string;
+};
+
+/**
+ * وضعیت واقعی صرافی — همیشه از کلیدهای ذخیره‌شده (Env یا دیتابیس) خوانده می‌شود.
+ * هیچ مقداری ثابت/نمایشی نیست و همان چیزی است که موتور اجرا هنگام تأیید
+ * کار بررسی می‌کند؛ پس پنل و صف تأیید هرگز با هم اختلاف ندارند.
+ */
+export async function exchangeStatus(): Promise<ExchangeStatus> {
+  const cfg = await resolveExchangeConfig();
+  const hasKey = Boolean(cfg.apiKey);
+  const hasSecret = Boolean(cfg.apiSecret);
+  const hasKeys = hasKey && hasSecret;
+
+  const blockers: ExchangeBlocker[] = [];
+  if (!hasKey) {
+    blockers.push({
+      code: "missing_api_key",
+      label: "کلید API صرافی (EXCHANGE_API_KEY) ست نشده است",
+      missing: ["EXCHANGE_API_KEY"],
+      action:
+        "در Vercel → Environment Variables مقدار EXCHANGE_API_KEY را وارد و Redeploy کنید (یا از پنل کارمند رمزارز ذخیره کنید).",
+    });
+  }
+  if (!hasSecret) {
+    blockers.push({
+      code: "missing_api_secret",
+      label: "سکرت API صرافی (EXCHANGE_SECRET_KEY) ست نشده است",
+      missing: ["EXCHANGE_SECRET_KEY"],
+      action:
+        "مقدار EXCHANGE_SECRET_KEY (یا EXCHANGE_API_SECRET) را در Environment Variables وارد کنید.",
+    });
+  }
+  if (hasKeys && !cfg.tradingEnabled) {
+    blockers.push({
+      code: "trading_flag_off",
+      label: "قفل ایمنی معامله بسته است (AGENT_TRADING_ENABLED=false)",
+      missing: ["AGENT_TRADING_ENABLED=true"],
+      action:
+        "پس از تست، مقدار AGENT_TRADING_ENABLED را روی true بگذارید تا دکمه تأیید، سفارش واقعی را به صرافی بفرستد.",
+    });
+  }
+
+  const keySource: ExchangeKeySource =
+    cfg.apiKeySource === "env" || cfg.apiSecretSource === "env"
+      ? "env"
+      : cfg.apiKeySource === "db" || cfg.apiSecretSource === "db"
+      ? "db"
+      : "none";
+
+  const canExecuteOrders = hasKeys && cfg.tradingEnabled;
+  const mode: ExchangeStatus["mode"] = !hasKeys
+    ? "not_configured"
+    : !cfg.tradingEnabled
+    ? "read-only"
+    : cfg.testnet
+    ? "testnet-trading"
+    : "live-trading";
+
+  const message = !hasKeys
+    ? "کلید API صرافی کامل ست نشده است؛ فقط قیمت عمومی بازار خوانده می‌شود و دکمه تأیید کارهای معاملاتی غیرفعال است."
+    : canExecuteOrders
+    ? `سفارش‌های واقعی پس از تأیید مدیرعامل روی ${cfg.testnet ? "Testnet" : "Mainnet"} (${cfg.exchangeName}) ارسال می‌شوند.`
+    : "کلیدها ست شده‌اند اما AGENT_TRADING_ENABLED=true نیست؛ ارسال سفارش قفل است و دکمه تأیید معامله غیرفعال می‌شود.";
+
   return {
-    exchange: "binance",
-    network: testnet ? "testnet" : "mainnet",
+    exchange: cfg.exchangeName,
+    network: cfg.testnet ? "testnet" : "mainnet",
     keysConfigured: hasKeys,
-    tradingEnabled: enabled,
-    mode: !hasKeys
-      ? "read-only"
-      : enabled
-      ? testnet
-        ? "testnet-trading"
-        : "live-trading"
-      : "read-only",
-    message: !hasKeys
-      ? "کلید API صرافی ست نشده است؛ فقط خواندن قیمت عمومی ممکن است."
-      : enabled
-      ? `سفارش‌های واقعی پس از تأیید مدیرعامل روی ${testnet ? "Testnet" : "Mainnet"} ارسال می‌شوند.`
-      : "کلیدها ست شده‌اند اما AGENT_TRADING_ENABLED=true نیست؛ ارسال سفارش قفل است.",
+    tradingEnabled: cfg.tradingEnabled,
+    canExecuteOrders,
+    mode,
+    keySource,
+    blockers,
+    message,
   };
 }
 
 async function assertTradingAllowed(opts?: { requireTradingFlag?: boolean }) {
-  const cfg = await resolveRuntimeExchangeConfig();
+  const cfg = await resolveExchangeConfig();
   const requireFlag = opts?.requireTradingFlag !== false;
   const missing: string[] = [];
   if (!cfg.apiKey) missing.push("EXCHANGE_API_KEY");
@@ -466,7 +564,8 @@ export async function testExchangeConnection() {
   } catch (e: any) {
     result.priceError = e?.message || "price error";
   }
-  if (ENV.exchangeKey() && ENV.exchangeSecret()) {
+  const cfg = await resolveExchangeConfig();
+  if (cfg.apiKey && cfg.apiSecret) {
     try {
       result.account = await getAccountBalances(["USDT", "BTC"]);
     } catch (e: any) {

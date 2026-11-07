@@ -140,7 +140,7 @@ async function askGemini(apiKey: string, prompt: string): Promise<string | null>
   )
     .replace(/\/v1beta\/?$/i, "")
     .replace(/\/$/, "");
-  for (const model of ["gemini-3.8-flash", "gemini-3.5-flash", "gemini-2.5-flash", "gemini-2.0-flash-lite", "gemini-1.5-flash"]) {
+  for (const model of ["gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.5-flash", "gemini-3.5-flash-lite"]) {
     try {
       const res = await fetch(
         `${baseUrl}/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`,
@@ -828,7 +828,7 @@ async function main() {
         )
         .join("\n") +
       `\n\n⚠️ چالش‌ها و موانع و وضعیت سرویس‌ها:\n` +
-      `1. هسته هوش مصنوعی Gemini: خطای قبلی HTTP 404 مدل منسوخ gemini-2.0-flash برطرف و به gemini-3.8-flash (با فالبک خودکار به 3.5/2.5/1.5-flash) ارتقا یافت.\n` +
+      `1. هسته هوش مصنوعی Gemini: خطای قبلی HTTP 404 مدل منسوخ gemini-2.0-flash برطرف و به gemini-3.8-flash (با فالبک خودکار به 3.7-flash و 3.5-flash) ارتقا یافت.\n` +
       `2. صرافی و معاملات آریا: متغیر AGENT_TRADING_ENABLED=${String(tradingNow)} متصل و فعال شد (${testnetNow ? "در حالت EXCHANGE_TESTNET=true؛ برای حساب اصلی بایننس/تبدیل متغیر EXCHANGE_TESTNET=false شود" : "حالت Mainnet فعال"}) — ثبت سفارش همچنان ۱۰۰٪ نیازمند کلیک شما روی دکمه [✅] در تلگرام است.\n` +
       `3. شبکه کیف پول واحد: در دیتابیس ${settingsMap.master_wallet_network || "USDT-ERC20"} و در متغیر محیطی ${conf("MASTER_WALLET_NETWORK") || "BEP20"} ثبت شده است؛ یکسان‌سازی برچسب شبکه توصیه می‌شود.`;
 
@@ -863,7 +863,7 @@ async function main() {
         )
         .join("\n") +
       `\n\n⚠️ <b>وضعیت سرویس‌ها و موارد نیازمند توجه:</b>\n` +
-      `🟢 <b>هسته Gemini AI:</b> خطای 404 مدل قدیمی <code>gemini-2.0-flash</code> رفع و به <code>gemini-3.8-flash</code> ارتقا یافت.\n` +
+      `🟢 <b>هسته Gemini AI:</b> خطای 404 مدل قدیمی <code>gemini-2.0-flash</code> رفع و به <code>gemini-3.8-flash</code> ارتقا یافت (فالبک: 3.7-flash / 3.5-flash).\n` +
       `🟢 <b>صرافی (A1 آریا):</b> <code>AGENT_TRADING_ENABLED=${String(tradingNow)}</code> متصل و فعال شد (${testnetNow ? "حالت Testnet فعال است — برای حساب واقعی EXCHANGE_TESTNET=false شود" : "حالت واقعی فعال"})؛ هیچ سفارشی بدون دکمه [✅] شما ثبت نمی‌شود.\n` +
       `🟠 <b>شبکه کیف پول واحد:</b> برچسب دیتابیس (<code>${escapeHtml(settingsMap.master_wallet_network || "USDT-ERC20")}</code>) با متغیر محیطی (<code>${escapeHtml(conf("MASTER_WALLET_NETWORK") || "BEP20")}</code>) یکسان‌سازی شود.`;
 

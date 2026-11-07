@@ -24,6 +24,12 @@ import {
 } from "@/lib/telegram";
 import { buildAgentFacts } from "@/lib/report";
 import { conf } from "@/lib/config";
+import {
+  approvalVerdict,
+  preflightJobKind,
+  statusLabel,
+  type JobKind,
+} from "@/lib/job-preflight";
 
 /**
  * صف کار واقعی ایجنت‌ها.
@@ -31,15 +37,7 @@ import { conf } from "@/lib/config";
  * هیچ کاری «شبیه‌سازی» نمی‌شود؛ خطاها عیناً ثبت می‌شوند.
  */
 
-export type JobKind =
-  | "trade"
-  | "confirm_deposit"
-  | "tool_run"
-  | "status_report"
-  | "withdraw"
-  | "proposal"
-  | "bounty"
-  | "custom";
+export type { JobKind };
 
 export type JobRecord = typeof agentJobs.$inferSelect;
 
@@ -88,6 +86,24 @@ async function legacyLog(agent: string, action: string, status: string, detail: 
 
 export async function createJob(input: CreateJobInput) {
   const requiresApproval = input.requiresApproval !== false;
+
+  // پیش‌بررسی: اگر کار از همین ابتدا آماده اجرای واقعی نیست، مشکل
+  // صریح در کار و کارت تأیید نوشته می‌شود تا مدیرعامل بداند چرا دکمه
+  // تأیید کار نمی‌کند (به‌جای گیر کردن کار در وضعیت failed).
+  const preflight = await preflightJobKind(
+    input.kind,
+    (input.payload || {}) as Record<string, any>,
+  );
+  const blockerNote = preflight.ready
+    ? ""
+    : [
+        "⛔ این کار هنوز آماده اجرای واقعی نیست:",
+        ...preflight.blockers.map((b) => `• ${b.label}`),
+        ...preflight.blockers.map((b) => `   ↳ ${b.action}`),
+      ].join("\n");
+
+  const detail = [input.detail ?? "", blockerNote].filter(Boolean).join("\n\n");
+
   const [job] = await db
     .insert(agentJobs)
     .values({
@@ -95,22 +111,28 @@ export async function createJob(input: CreateJobInput) {
       agentName: input.agentName,
       kind: input.kind,
       title: input.title,
-      detail: input.detail ?? "",
+      detail,
       payload: input.payload ?? {},
-      status: requiresApproval ? "awaiting_approval" : "queued",
+      status: requiresApproval ? "awaiting_approval" : preflight.ready ? "queued" : "needs_config",
       risk: input.risk ?? "medium",
       requiresApproval,
+      error: preflight.ready ? "" : preflight.reason,
     })
     .returning();
 
   await logActivity({
     agentId: input.agentId,
     agentName: input.agentName,
-    action: requiresApproval ? "درخواست کار ثبت شد (منتظر تأیید مدیرعامل)" : "کار در صف اجرا قرار گرفت",
-    status: "pending",
-    detail: input.title,
+    action: preflight.ready
+      ? requiresApproval
+        ? "درخواست کار ثبت شد (منتظر تأیید مدیرعامل)"
+        : "کار در صف اجرا قرار گرفت"
+      : "کار ثبت شد اما نیازمند تنظیمات است (اجرا نمی‌شود)",
+    status: preflight.ready ? "pending" : "blocked",
+    detail: preflight.ready ? input.title : `${input.title} • ${preflight.reason}`,
     jobId: job.id,
     source: "panel",
+    meta: preflight.ready ? undefined : { blockers: preflight.blockers },
   });
 
   let telegram:
@@ -191,7 +213,13 @@ export async function rejectJob(id: number, actor: string, reason = "") {
 
   if (!job) {
     const current = await getJob(id);
-    return { ok: false as const, error: "این کار قابل رد کردن نیست", job: current };
+    return {
+      ok: false as const,
+      error: current
+        ? `این کار در وضعیت «${statusLabel(current.status)}» است و قابل رد کردن نیست.`
+        : "کار پیدا نشد",
+      job: current,
+    };
   }
 
   await logActivity({
@@ -210,10 +238,40 @@ export async function rejectJob(id: number, actor: string, reason = "") {
 
 /** تأیید کار + اجرای فوری (اتمیک، ضد اجرای دوباره). */
 export async function approveJob(id: number, actor: string) {
+  // ۰) پیش‌بررسی: کار «سالم و آماده» است؟
+  // اگر نه، هیچ اجرایی شروع نمی‌شود و دلیل دقیق برگردانده می‌شود
+  // (به‌جای اینکه کار در وضعیت failed گیر کند).
+  const before = await getJob(id);
+  if (!before) return { ok: false as const, error: "کار پیدا نشد" };
+  const verdict = await approvalVerdict(before);
+  if (!verdict.allowed) {
+    if (before.status === "succeeded") {
+      return {
+        ok: true as const,
+        job: before,
+        alreadyDone: true,
+        execution: before.result,
+        message: verdict.message,
+      };
+    }
+    return {
+      ok: false as const,
+      error: verdict.message,
+      code: "not_ready",
+      blockers: verdict.blockers,
+      job: before,
+    };
+  }
+
   const [claimed] = await db
     .update(agentJobs)
     .set({ status: "approved", approvedBy: actor, approvedAt: new Date() })
-    .where(and(eq(agentJobs.id, id), inArray(agentJobs.status, ["awaiting_approval", "queued"])))
+    .where(
+      and(
+        eq(agentJobs.id, id),
+        inArray(agentJobs.status, ["awaiting_approval", "queued"]),
+      ),
+    )
     .returning();
 
   if (!claimed) {
@@ -224,7 +282,8 @@ export async function approveJob(id: number, actor: string) {
     }
     return {
       ok: false as const,
-      error: `این کار در وضعیت «${current.status}» است و قابل تأیید نیست`,
+      error: `این کار در وضعیت «${statusLabel(current.status)}» است و قابل تأیید نیست.`,
+      code: "wrong_status",
       job: current,
     };
   }
@@ -246,6 +305,33 @@ export async function approveJob(id: number, actor: string) {
 }
 
 type ExecutionResult = { ok: boolean; result?: unknown; error?: string; code?: string };
+
+/**
+ * کار به خاطر نبودِ پیکربندی (کلید صرافی، فلگ معامله، ورکر...) «شکست» نیست؛
+ * فقط هنوز قابل اجرا نیست. این تابع آن را در وضعیت «needs_config» نگه
+ * می‌دارد تا دکمه «تلاش دوباره» بعد از تنظیم کلیدها کار کند و کار در
+ * وضعیت failed گیر نکند.
+ */
+async function markNeedsConfig(job: JobRecord, message: string, code = "not_configured") {
+  await db
+    .update(agentJobs)
+    .set({ status: "needs_config", error: message, finishedAt: new Date() })
+    .where(eq(agentJobs.id, job.id));
+  await recordAgentError({
+    agentName: job.agentName,
+    action: `این کار نیاز به تنظیمات دارد: ${job.title}`,
+    detail: `${message} • پس از تکمیل کلیدها/تنظیمات، «تلاش دوباره» را بزنید.`,
+    source: "job",
+    jobId: job.id,
+    meta: { code, kind: job.kind, needsConfig: true },
+  });
+  return {
+    ok: false as const,
+    error: message,
+    code,
+    needsConfig: true as const,
+  };
+}
 
 async function markFailed(job: JobRecord, message: string, code = "execution_failed") {
   await db
@@ -364,7 +450,11 @@ async function executeTrade(job: JobRecord, _actor: string): Promise<ExecutionRe
     };
   } catch (e: any) {
     if (e instanceof ConfigError) {
-      return markFailed(job, `${e.message} (کلیدهای ناقص: ${e.missing.join(", ")})`, e.code);
+      return markNeedsConfig(
+        job,
+        `${e.message} (کلیدهای ناقص: ${e.missing.join(", ")}) — پس از تنظیم، دکمه «تلاش دوباره» را بزنید.`,
+        e.code,
+      );
     }
     if (e instanceof ExchangeError) {
       return markFailed(job, e.message, e.code);
@@ -427,9 +517,9 @@ async function executeToolRun(job: JobRecord): Promise<ExecutionResult> {
   const p = (job.payload || {}) as Record<string, any>;
   const workerUrl = ENV.workerUrl();
   if (!workerUrl) {
-    return markFailed(
+    return markNeedsConfig(
       job,
-      "ورکر اجرای ابزار پیکربندی نشده است (AGENT_WORKER_URL). ابزارها بدون سرویس واقعی اجرا نمی‌شوند.",
+      "ورکر اجرای ابزار پیکربندی نشده است (AGENT_WORKER_URL). ابزارها بدون سرویس واقعی اجرا نمی‌شوند. پس از ست کردن، «تلاش دوباره» را بزنید.",
       "worker_not_configured"
     );
   }
@@ -657,9 +747,31 @@ export async function retryJob(id: number, actor: string) {
   const [job] = await db
     .update(agentJobs)
     .set({ status: "approved", error: "", finishedAt: null, approvedBy: actor, approvedAt: new Date() })
-    .where(and(eq(agentJobs.id, id), inArray(agentJobs.status, ["failed", "expired"])))
+    .where(and(eq(agentJobs.id, id), inArray(agentJobs.status, ["failed", "expired", "needs_config"])))
     .returning();
-  if (!job) return { ok: false as const, error: "فقط کارهای ناموفق/منقضی قابل تلاش دوباره هستند" };
+  if (!job) {
+    const current = await getJob(id);
+    return {
+      ok: false as const,
+      error: current
+        ? `این کار در وضعیت «${statusLabel(current.status)}» است؛ فقط کارهای ناموفق/نیازمند تنظیمات/منقضی قابل تلاش دوباره هستند.`
+        : "کار پیدا نشد",
+      job: current,
+    };
+  }
+
+  // پیش از تلاش دوباره بررسی کن که علت قبلی رفع شده باشد
+  const verdict = await approvalVerdict(job);
+  if (!verdict.allowed) {
+    await markNeedsConfig(job, verdict.message, "retry_blocked");
+    return {
+      ok: false as const,
+      error: verdict.message,
+      code: "not_ready",
+      blockers: verdict.blockers,
+      job: await getJob(id),
+    };
+  }
 
   await logActivity({
     agentId: job.agentId,
