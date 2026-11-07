@@ -1,5 +1,5 @@
 import {
-  pgTable,
+  pgSchema,
   text,
   serial,
   integer,
@@ -7,7 +7,12 @@ import {
   timestamp,
 } from "drizzle-orm/pg-core";
 
-export const users = pgTable("users", {
+// Isolated schema inside the shared Supabase database.
+// The `public` schema belongs to another app (store tables), so all tables
+// of this project live in `agentos` (see supabase/schema.sql).
+export const agentos = pgSchema("agentos");
+
+export const users = agentos.table("users", {
   id: serial("id").primaryKey(),
   email: text("email").notNull().unique(),
   passwordHash: text("password_hash").notNull(),
@@ -16,7 +21,7 @@ export const users = pgTable("users", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
-export const agents = pgTable("agents", {
+export const agents = agentos.table("agents", {
   id: serial("id").primaryKey(),
   name: text("name").notNull(),
   slug: text("slug").notNull().unique(),
@@ -33,7 +38,7 @@ export const agents = pgTable("agents", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
-export const projects = pgTable("projects", {
+export const projects = agentos.table("projects", {
   id: serial("id").primaryKey(),
   title: text("title").notNull(),
   clientName: text("client_name").notNull(),
@@ -50,7 +55,7 @@ export const projects = pgTable("projects", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
-export const tasks = pgTable("tasks", {
+export const tasks = agentos.table("tasks", {
   id: serial("id").primaryKey(),
   title: text("title").notNull(),
   agent: text("agent").notNull().default("ایجنت مذاکره"),
@@ -63,7 +68,7 @@ export const tasks = pgTable("tasks", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
-export const messages = pgTable("messages", {
+export const messages = agentos.table("messages", {
   id: serial("id").primaryKey(),
   chatId: text("chat_id").notNull().default(""),
   clientName: text("client_name").notNull(),
@@ -75,7 +80,7 @@ export const messages = pgTable("messages", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
-export const transactions = pgTable("transactions", {
+export const transactions = agentos.table("transactions", {
   id: serial("id").primaryKey(),
   title: text("title").notNull(),
   projectTitle: text("project_title").notNull().default(""),
@@ -89,7 +94,7 @@ export const transactions = pgTable("transactions", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
-export const agentLogs = pgTable("agent_logs", {
+export const agentLogs = agentos.table("agent_logs", {
   id: serial("id").primaryKey(),
   agent: text("agent").notNull(),
   action: text("action").notNull(),
@@ -99,7 +104,7 @@ export const agentLogs = pgTable("agent_logs", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
-export const toolRuns = pgTable("tool_runs", {
+export const toolRuns = agentos.table("tool_runs", {
   id: serial("id").primaryKey(),
   tool: text("tool").notNull(),
   input: text("input").notNull().default(""),
@@ -108,7 +113,7 @@ export const toolRuns = pgTable("tool_runs", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
-export const settings = pgTable("settings", {
+export const settings = agentos.table("settings", {
   id: serial("id").primaryKey(),
   key: text("key").notNull().unique(),
   value: text("value").notNull().default(""),

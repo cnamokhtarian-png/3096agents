@@ -1,12 +1,21 @@
 -- =========================================================================
 -- Freelance Agent OS & Unified Crypto Vault — Supabase PostgreSQL Schema
 -- =========================================================================
--- نحوه استفاده:
--- ۱. وارد پنل Supabase شوید -> بخش SQL Editor
--- ۲. تمام این فایل را کپی و Run کنید (یا از ترمینال دستور npx drizzle-kit push بزنید)
+-- نکته مهم: این دیتابیس با یک اپ دیگر مشترک است و اسکیمای public متعلق
+-- به آن است (جدول‌های فروشگاه). پس جدول‌های این پروژه در اسکیمای ایزوله
+-- `agentos` ساخته می‌شوند تا هیچ تداخلی پیش نیاید.
+--
+-- نحوه استفاده (یک‌بار):
+-- ۱. یک رول اختصاصی با دسترسی محدود بسازید (پسورد را امن نگه دارید):
+--      CREATE ROLE agentos WITH LOGIN PASSWORD 'STRONG_RANDOM_PASSWORD';
+-- ۲. تمام این فایل را در SQL Editor سوپابیس Run کنید.
+-- ۳. در Vercel مقدار DATABASE_URL را با یوزر agentos.<project-ref> روی
+--    پولر (پورت 6543) ست کنید. سطر AUTH اختیاری است.
 -- =========================================================================
 
-CREATE TABLE IF NOT EXISTS users (
+CREATE SCHEMA IF NOT EXISTS agentos;
+
+CREATE TABLE IF NOT EXISTS agentos.users (
   id SERIAL PRIMARY KEY,
   email TEXT NOT NULL UNIQUE,
   password_hash TEXT NOT NULL,
@@ -15,7 +24,7 @@ CREATE TABLE IF NOT EXISTS users (
   created_at TIMESTAMP DEFAULT NOW()
 );
 
-CREATE TABLE IF NOT EXISTS agents (
+CREATE TABLE IF NOT EXISTS agentos.agents (
   id SERIAL PRIMARY KEY,
   name TEXT NOT NULL,
   slug TEXT NOT NULL UNIQUE,
@@ -32,7 +41,7 @@ CREATE TABLE IF NOT EXISTS agents (
   created_at TIMESTAMP DEFAULT NOW()
 );
 
-CREATE TABLE IF NOT EXISTS projects (
+CREATE TABLE IF NOT EXISTS agentos.projects (
   id SERIAL PRIMARY KEY,
   title TEXT NOT NULL,
   client_name TEXT NOT NULL,
@@ -49,7 +58,7 @@ CREATE TABLE IF NOT EXISTS projects (
   created_at TIMESTAMP DEFAULT NOW()
 );
 
-CREATE TABLE IF NOT EXISTS tasks (
+CREATE TABLE IF NOT EXISTS agentos.tasks (
   id SERIAL PRIMARY KEY,
   title TEXT NOT NULL,
   agent TEXT NOT NULL DEFAULT 'ایجنت مذاکره',
@@ -62,7 +71,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   created_at TIMESTAMP DEFAULT NOW()
 );
 
-CREATE TABLE IF NOT EXISTS messages (
+CREATE TABLE IF NOT EXISTS agentos.messages (
   id SERIAL PRIMARY KEY,
   chat_id TEXT NOT NULL DEFAULT '',
   client_name TEXT NOT NULL,
@@ -74,7 +83,7 @@ CREATE TABLE IF NOT EXISTS messages (
   created_at TIMESTAMP DEFAULT NOW()
 );
 
-CREATE TABLE IF NOT EXISTS transactions (
+CREATE TABLE IF NOT EXISTS agentos.transactions (
   id SERIAL PRIMARY KEY,
   title TEXT NOT NULL,
   project_title TEXT NOT NULL DEFAULT '',
@@ -88,7 +97,7 @@ CREATE TABLE IF NOT EXISTS transactions (
   created_at TIMESTAMP DEFAULT NOW()
 );
 
-CREATE TABLE IF NOT EXISTS agent_logs (
+CREATE TABLE IF NOT EXISTS agentos.agent_logs (
   id SERIAL PRIMARY KEY,
   agent TEXT NOT NULL,
   action TEXT NOT NULL,
@@ -98,7 +107,7 @@ CREATE TABLE IF NOT EXISTS agent_logs (
   created_at TIMESTAMP DEFAULT NOW()
 );
 
-CREATE TABLE IF NOT EXISTS tool_runs (
+CREATE TABLE IF NOT EXISTS agentos.tool_runs (
   id SERIAL PRIMARY KEY,
   tool TEXT NOT NULL,
   input TEXT NOT NULL DEFAULT '',
@@ -107,13 +116,21 @@ CREATE TABLE IF NOT EXISTS tool_runs (
   created_at TIMESTAMP DEFAULT NOW()
 );
 
-CREATE TABLE IF NOT EXISTS settings (
+CREATE TABLE IF NOT EXISTS agentos.settings (
   id SERIAL PRIMARY KEY,
   key TEXT NOT NULL UNIQUE,
   value TEXT NOT NULL DEFAULT ''
 );
 
--- =========================================================================
--- نکته مهم: داده‌های اولیه (ادمین، کارمند رمزارز، ناوگان ایجنت‌ها و کیف پول واحد)
--- هنگام اولین باز شدن سایت یا فراخوانی API به صورت خودکار (Auto-Seed) ایجاد می‌شوند.
--- =========================================================================
+-- دسترسی حداقلی رول اختصاصی (فقط اگر رول وجود داشته باشد)
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'agentos') THEN
+    EXECUTE 'GRANT USAGE ON SCHEMA agentos TO agentos';
+    EXECUTE 'GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA agentos TO agentos';
+    EXECUTE 'GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA agentos TO agentos';
+    EXECUTE 'ALTER DEFAULT PRIVILEGES IN SCHEMA agentos GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO agentos';
+    EXECUTE 'ALTER DEFAULT PRIVILEGES IN SCHEMA agentos GRANT USAGE, SELECT ON SEQUENCES TO agentos';
+  END IF;
+END
+$$;

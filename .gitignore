@@ -1,0 +1,26 @@
+# dependencies
+node_modules/
+.pnp
+.pnp.*
+
+# next.js
+.next/
+out/
+build/
+dist/
+
+# env - NEVER commit secrets
+.env
+.env*.local
+.vercel
+
+# logs
+*.log
+npm-debug.log*
+
+# misc
+.DS_Store
+*.pem
+coverage/
+.next-env.d.ts
+tsconfig.tsbuildinfo
