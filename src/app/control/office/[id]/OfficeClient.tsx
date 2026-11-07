@@ -202,7 +202,9 @@ export default function OfficeClient({ agentId }: { agentId: number }) {
   const { agent, goal, today, income, activity, jobs, transactions, wallet, market, infra } = data;
   const theme = themeFor(agent.specialty);
   const status = statusInfo(agent.status);
-  const pendingJobs = (jobs as Job[]).filter((j) => ["awaiting_approval", "queued", "approved", "running"].includes(j.status));
+  const pendingJobs = (jobs as Job[]).filter((j) =>
+    ["awaiting_approval", "queued", "approved", "running", "needs_config", "failed", "expired"].includes(j.status)
+  );
   const awaiting = (jobs as Job[]).filter((j) => j.status === "awaiting_approval");
   const failed = (activity as Activity[]).filter((a) => a.status === "failed");
   const marketLine = market?.entries?.length
@@ -555,7 +557,11 @@ export default function OfficeClient({ agentId }: { agentId: number }) {
                         )}
                         {(j as any).preflight?.blockers?.length > 0 && (
                           <div className="mt-1 rounded-lg border border-orange-400/30 bg-orange-500/10 p-2">
-                            <p className="text-[10px] font-black text-orange-300">🔒 آماده اجرا نیست: دکمه تأیید قفل است</p>
+                            <p className="text-[10px] font-black text-orange-300">
+                              {["failed", "expired", "needs_config"].includes(j.status)
+                                ? "🔒 این کار آماده اجرا نیست: ابتدا موارد زیر را رفع کنید"
+                                : "🔒 آماده اجرا نیست: دکمه تأیید قفل است"}
+                            </p>
                             <ul className="mt-1 space-y-1">
                               {(j as any).preflight.blockers.map((b: any) => (
                                 <li key={b.code} className="text-[9px] leading-4 text-orange-200/90">
@@ -588,9 +594,21 @@ export default function OfficeClient({ agentId }: { agentId: number }) {
                         {j.status === "queued" && (
                           <button
                             onClick={() => jobAction(j.id, "approve")}
-                            className="mt-2 rounded-lg bg-white/10 px-3 py-1.5 text-[11px] font-bold"
+                            disabled={busy === `job-${j.id}-approve` || (j as any).canApprove === false}
+                            title={(j as any).canApprove === false ? (j as any).preflight?.reason || "این کار آماده اجرا نیست" : ""}
+                            className="mt-2 rounded-lg bg-white/10 px-3 py-1.5 text-[11px] font-bold disabled:cursor-not-allowed disabled:opacity-40"
                           >
-                            ▶️ اجرای همین حالا
+                            {(j as any).canApprove === false ? "🔒 اجرا قفل است" : "▶️ اجرای همین حالا"}
+                          </button>
+                        )}
+                        {["failed", "expired", "needs_config"].includes(j.status) && (
+                          <button
+                            onClick={() => jobAction(j.id, "retry")}
+                            disabled={busy === `job-${j.id}-retry`}
+                            title={(j as any).preflight?.reason || "پس از رفع مشکل، دوباره اجرا شود"}
+                            className="mt-2 rounded-lg border border-sky-400/30 bg-sky-500/10 px-3 py-1.5 text-[11px] font-bold text-sky-300 disabled:cursor-not-allowed disabled:opacity-40"
+                          >
+                            {busy === `job-${j.id}-retry` ? "در حال تلاش…" : "🔄 تلاش دوباره"}
                           </button>
                         )}
                       </li>

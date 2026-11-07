@@ -142,18 +142,20 @@ export async function GET(
         jobs: await Promise.all(
           jobs.map(async (j) => {
             const decidable = ["awaiting_approval", "queued"].includes(j.status);
-            const preflight = decidable
-              ? await preflightJobKind(
-                  j.kind as JobKind,
-                  (j.payload || {}) as Record<string, any>,
-                  { exchange: exchange },
-                )
-              : null;
+            const retryable = ["failed", "expired", "needs_config"].includes(j.status);
+            const preflight =
+              decidable || retryable
+                ? await preflightJobKind(
+                    j.kind as JobKind,
+                    (j.payload || {}) as Record<string, any>,
+                    { exchange: exchange },
+                  )
+                : null;
             return {
               ...j,
               statusLabel: statusLabel(j.status),
               canApprove: Boolean(decidable && preflight?.ready),
-              canRetry: ["failed", "expired", "needs_config"].includes(j.status),
+              canRetry: retryable,
               preflight,
             };
           }),
