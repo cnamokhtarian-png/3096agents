@@ -1,0 +1,7 @@
+@import url('https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400;500;700;800;900&display=swap');
+@import "tailwindcss";
+*{font-family:'Vazirmatn',system-ui,sans-serif}
+body{background:#f6f7f9}
+input,select,textarea{outline:none}
+::-webkit-scrollbar{width:6px;height:6px}::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:99px}
+@keyframes pulse-dot{0%,100%{opacity:1}50%{opacity:.3}}.live-dot{animation:pulse-dot 1.2s infinite}
