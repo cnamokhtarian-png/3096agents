@@ -64,6 +64,7 @@ function mainMenuKeyboard(pending: number) {
         { text: "🤖 ایجنت‌ها", callback_data: "menu:agents" },
         { text: "💳 کیف پول", callback_data: "menu:wallet" },
       ],
+      [{ text: "▶️ اجرای شیفت همه", callback_data: "run:shift" }],
     ],
   };
 }
@@ -298,6 +299,45 @@ export async function POST(req: NextRequest) {
       });
     }
 
+    // ─── اجرای شیفت شرکت: run:shift ───
+    if (action === "run") {
+      if (!isAdmin(b.callback_query.from?.id)) {
+        return NextResponse.json({
+          ok: true,
+          method: "answerCallbackQuery",
+          callback_query_id: cbId,
+          text: "⛔ فقط ادمین",
+          show_alert: true,
+        });
+      }
+      const { runShift } = await import("@/lib/company");
+      const reports: any[] = await runShift();
+      const lines = reports
+        .map((r) => `${r.avatar} ${r.name}: ${r.summary}`)
+        .join("\n");
+      const done = reports.filter((r) => r.taskId).length;
+      if (cbChatId) {
+        await tgApi("sendMessage", {
+          chat_id: cbChatId,
+          text: `🏢 <b>گزارش شیفت شرکت</b>\n\n${lines}\n\n🧾 ${done} کار جدید منتظر تأیید شماست.`,
+          parse_mode: "HTML",
+        });
+      }
+      await db.insert(agentLogs).values({
+        agent: "داشبورد تلگرام",
+        action: "▶️ اجرای شیفت از تلگرام",
+        status: "success",
+        detail: `${reports.length} کارمند`,
+        durationMs: 500,
+      });
+      return NextResponse.json({
+        ok: true,
+        method: "answerCallbackQuery",
+        callback_query_id: cbId,
+        text: "شیفت اجرا شد ✅",
+      });
+    }
+
     const taskId = Number(id);
     // Human-in-the-loop: تأیید/رد واقعی — وضعیت تسک در دیتابیس عوض می‌شود
     const newStatus =
@@ -384,6 +424,22 @@ export async function POST(req: NextRequest) {
         }
       }
     }
+    // ارسال واقعی پاسخ به مشتری بعد از تأیید انسانی (A3)
+    if (newStatus === "approved" && taskId > 0) {
+      const found3: any = await db.select().from(tasks).where(eq(tasks.id, taskId));
+      const t3 = found3[0];
+      if (t3?.actionType === "send_message" && t3.payload?.startsWith("TO:")) {
+        const nl = t3.payload.indexOf("\n");
+        const toChat = t3.payload.slice(3, nl > 3 ? nl : undefined).trim();
+        const draft = nl > 3 ? t3.payload.slice(nl + 1) : "";
+        if (toChat && draft) {
+          await sendRealTelegramMessage(toChat, draft);
+          const ac3 = process.env.TELEGRAM_ADMIN_CHAT_ID;
+          if (ac3) await sendRealTelegramMessage(ac3, `📤 <b>پاسخ به مشتری ارسال شد.</b>`);
+        }
+      }
+    }
+
     await db.insert(agentLogs).values({
       agent: "Webhook تلگرام",
       action: data.startsWith("approve")

@@ -111,6 +111,8 @@ export async function ensureSeed() {
         { key: "risk_max_trade_pct", value: "2" },
         { key: "risk_max_leverage", value: "3" },
         { key: "risk_require_sl", value: "true" },
+        { key: "trade_signal_drop_pct", value: "3" },
+        { key: "a1_last_btc", value: "" },
       ])
       .onConflictDoNothing();
 

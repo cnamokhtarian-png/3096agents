@@ -97,6 +97,10 @@ export default function Control() {
   const [exPrice, setExPrice] = useState<any>(null);
   const [orderForm, setOrderForm] = useState({ symbol: "BTC_IRT", side: "BUY", type: "LIMIT", quantity: "", price: "" });
 
+  // شرکت
+  const [shiftReports, setShiftReports] = useState<any[]>([]);
+  const [shifting, setShifting] = useState(false);
+
   function blankProduct() {
     return {
       title: "", clientName: "", telegramUser: "", source: "کاتالوگ خدمات",
@@ -479,6 +483,25 @@ export default function Control() {
     }
   }
 
+  async function runShift(agentId?: number) {
+    setShifting(true);
+    try {
+      const res = await fetch(`/api/company/tick${agentId ? `?agent=${agentId}` : ""}`, { method: "POST" });
+      const d = await res.json();
+      if (d.ok) {
+        setShiftReports(d.reports || []);
+        const withWork = (d.reports || []).filter((r: any) => r.taskId).length;
+        notify(`شیفت اجرا شد ✅ ${fa(withWork)} کار جدید منتظر تأیید`);
+        load();
+      } else {
+        notify(d.error || "خطای شیفت");
+      }
+    } catch {
+      notify("خطای اتصال");
+    }
+    setShifting(false);
+  }
+
   async function testTelegram() {
     const chatId = setup?.telegramAdminChat;
     if (!chatId) {
@@ -506,7 +529,7 @@ export default function Control() {
   }
 
   const nav: [string, string][] = [
-    ["home", "🏠 خانه"],
+    ["home", "🏢 شرکت"],
     ["agents", "🤖 ایجنت‌ها"],
     ["products", "💼 محصولات"],
     ["payout", "💸 برداشت"],
@@ -570,6 +593,81 @@ export default function Control() {
         {/* ==================== خانه ==================== */}
         {view === "home" && (
           <section className="space-y-4">
+            {/* ===== شرکت 3096 — اتاق مدیریت ===== */}
+            <div className="bg-gradient-to-l from-slate-900 to-slate-700 text-white rounded-3xl p-5">
+              <div className="flex flex-wrap justify-between items-center gap-3">
+                <div>
+                  <h2 className="text-xl font-black">🏢 شرکت 3096 — اتاق مدیریت</h2>
+                  <p className="text-slate-300 text-sm mt-1">کارمندها هر ۱۵ دقیقه خودکار شیفت می‌روند — یا همین حالا دستی اجرا کنید.</p>
+                </div>
+                <button
+                  onClick={() => runShift()}
+                  disabled={shifting}
+                  className="bg-amber-400 text-black px-6 py-2.5 rounded-full font-black disabled:opacity-50"
+                >
+                  {shifting ? "⏳ در حال اجرا..." : "▶️ شروع شیفت همه"}
+                </button>
+              </div>
+              {shiftReports.length > 0 && (
+                <div className="mt-3 bg-white/10 rounded-2xl p-3 space-y-2 text-sm">
+                  {shiftReports.map((r: any) => (
+                    <div key={r.agentId}>
+                      <p>
+                        {r.avatar} <b>{r.name}</b>: {r.summary}
+                      </p>
+                      {r.problem && (
+                        <p className="text-red-200 text-xs mt-0.5">
+                          ⚠️ مشکل: {r.problem} — راه‌حل: {r.fix}
+                        </p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div>
+              <h3 className="font-black mb-2">👔 کارمندها</h3>
+              <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-3">
+                {agentsList.map((a: any) => {
+                  const last = logs.find((l: any) => l.agent === a.name);
+                  const on = a.status !== "paused";
+                  return (
+                    <div key={a.id} className="bg-white rounded-3xl border p-4">
+                      <div className="flex justify-between items-center">
+                        <p className="text-2xl">{a.avatar}</p>
+                        <span
+                          className={`text-xs font-bold px-2 py-0.5 rounded-full ${
+                            on ? "bg-emerald-100 text-emerald-700" : "bg-red-100 text-red-600"
+                          }`}
+                        >
+                          {on ? "🟢 مشغول کار" : "🔴 خاموش"}
+                        </span>
+                      </div>
+                      <b className="text-sm">{a.name}</b>
+                      <p className="text-xs text-slate-500">{a.role}</p>
+                      <p className="text-xs mt-1">
+                        💵 {fa(a.earnedUsdt)} USDT | ✅ {fa(a.tasksCompleted)} کار انجام‌شده
+                      </p>
+                      <p className="text-xs mt-2 bg-slate-50 rounded-xl p-2">
+                        📝 آخرین گزارش:{" "}
+                        {last
+                          ? `${last.action} — ${(last.detail || "").slice(0, 100)}`
+                          : "هنوز شیفتی نرفته — «شروع شیفت» را بزنید."}
+                      </p>
+                      <button
+                        onClick={() => runShift(a.id)}
+                        disabled={shifting}
+                        className="mt-2 w-full bg-slate-900 text-white rounded-full py-1.5 text-sm font-bold disabled:opacity-50"
+                      >
+                        ▶️ اجرای این کارمند
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
               {[
                 ["💰 درآمد واقعی ثبت‌شده", fa(stats?.income) + " USDT", "text-emerald-600"],
