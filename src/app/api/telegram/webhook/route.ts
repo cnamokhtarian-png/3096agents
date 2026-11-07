@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db";
-import { messages, tasks, agentLogs } from "@/db/schema";
+import { messages, tasks, agentLogs, transactions } from "@/db/schema";
 import { ensureSeed, getMasterWallet } from "@/lib/seed";
 import { eq } from "drizzle-orm";
 
@@ -55,10 +55,37 @@ export async function POST(req: NextRequest) {
         ? "rejected"
         : null;
     if (newStatus && taskId > 0) {
+      const found: any = await db
+        .select()
+        .from(tasks)
+        .where(eq(tasks.id, taskId));
+      const target = found[0];
       await db
         .update(tasks)
         .set({ status: newStatus })
         .where(eq(tasks.id, taskId));
+      // اگر تسک از نوع برداشت باشد، وضعیت برداشت هم همگام می‌شود
+      if (
+        target?.actionType === "payout" &&
+        target.payload?.startsWith("payout_tx:")
+      ) {
+        const payoutId = Number(target.payload.split(":")[1]);
+        if (payoutId > 0) {
+          await db
+            .update(transactions)
+            .set({ status: newStatus })
+            .where(eq(transactions.id, payoutId));
+          const adminChat = process.env.TELEGRAM_ADMIN_CHAT_ID;
+          if (adminChat) {
+            await sendRealTelegramMessage(
+              adminChat,
+              newStatus === "approved"
+                ? `✅ <b>برداشت تأیید شد.</b>\nحالا انتقال را در متامسک انجام دهید و هش تراکنش را در داشبورد ← بخش «برداشت» ثبت کنید تا وضعیت «تکمیل» شود.`
+                : `❌ <b>درخواست برداشت رد شد.</b>`
+            );
+          }
+        }
+      }
     }
     await db.insert(agentLogs).values({
       agent: "Webhook تلگرام",
@@ -121,13 +148,13 @@ export async function POST(req: NextRequest) {
       .insert(tasks)
       .values({
         title: "پاسخ و پیشنهاد پرداخت به: " + name,
-        agent: "ایجنت فروش و مذاکره تلگرام",
+        agent: "A3 · فروشنده تلگرام",
         actionType: "send_message",
         description: text,
         projectTitle: "پیام تلگرام " + username,
         status: "pending",
         risk: "medium",
-        payload: `پاسخ پیشنهادی ایجنت: سلام ${name} عزیز، پروژه قابل انجام است. آدرس کیف پول واحد (${masterWallet.network}): ${masterWallet.address}`,
+        payload: `پاسخ پیشنهادی ایجنت: سلام ${name} عزیز، پروژه قابل انجام است. آدرس کیف پول برداشت (${masterWallet.network}): ${masterWallet.address || "هنوز ثبت نشده — از داشبورد وارد کنید"}`,
       })
       .returning();
     task = rows[0];

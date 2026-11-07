@@ -2,42 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db";
 import { agents, transactions, agentLogs } from "@/db/schema";
 import { eq } from "drizzle-orm";
-import { ensureSeed, getMasterWallet } from "@/lib/seed";
-import { randomBytes } from "crypto";
-
-const cryptoStrategies: Record<
-  string,
-  { label: string; min: number; max: number; report: (amt: number, wallet: string) => string }
-> = {
-  arbitrage: {
-    label: "آربیتراژ صرافی‌ها (DEX/CEX Spread)",
-    min: 25,
-    max: 95,
-    report: (amt, wallet) =>
-      `🪙 گزارش کارمند رمزارز — استراتژی آربیتراژ\n• جفت ارز: TON/USDT و SOL/USDT (اختلاف قیمت ۱.۶۵٪ بین OKX و Raydium)\n• حجم معامله چرخشی: ۲٬۴۰۰ USDT بدون ریسک جهت‌دار\n• سود خالص محقق‌شده: +${amt} USDT\n• وضعیت واریز: واریز خودکار به کیف پول واحد (${wallet}) انجام شد ✅`,
-  },
-  whale_alert: {
-    label: "رصد نهنگ‌ها و فروش سیگنال آن‌چین",
-    min: 35,
-    max: 120,
-    report: (amt, wallet) =>
-      `🐋 گزارش کارمند رمزارز — شکار جریان نهنگ‌ها\n• کیف پول هوشمند شناسایی‌شده: ورود ۳.۲M USDT به استخر نقدینگی Arbitrum\n• بسته تحلیل آن‌چین برای ۴۸ مشترک VIP تلگرام ارسال شد\n• کارمزد اشتراک جمع‌آوری‌شده: +${amt} USDT\n• وضعیت واریز: واریز مستقیم به کیف پول واحد (${wallet}) ✅`,
-  },
-  airdrop: {
-    label: "شکار ایردراپ و پاداش تست‌نت",
-    min: 18,
-    max: 75,
-    report: (amt, wallet) =>
-      `🪂 گزارش کارمند رمزارز — ایردراپ و فارمینگ خودکار\n• تکمیل تسک‌های آن‌چین شبکه L2 و تبدیل توکن پاداش به استیبل‌کوین\n• بازده خالص نقدشده: +${amt} USDT\n• وضعیت واریز: تجمیع در کیف پول واحد (${wallet}) ✅`,
-  },
-  signal_fee: {
-    label: "مشاوره و ربات کپی‌ترید کریپتو",
-    min: 40,
-    max: 150,
-    report: (amt, wallet) =>
-      `📈 گزارش کارمند رمزارز — کارمزد عملکرد کپی‌ترید\n• بسته شدن پوزیشن لانگ ETH با سود +۴.۲٪ برای حساب‌های متصل\n• سهم ۲۰٪ کارمزد موفقیت (Performance Fee): +${amt} USDT\n• وضعیت واریز: انتقال آنی به کیف پول واحد (${wallet}) ✅`,
-  },
-};
+import { ensureSeed, getMasterWallet, requireAdmin } from "@/lib/seed";
 
 export async function GET() {
   await ensureSeed();
@@ -47,8 +12,11 @@ export async function GET() {
     endpoint: "/api/agents/ingest",
     method: "POST",
     description:
-      "API استاندارد اتصال ایجنت‌های خارجی و کارمند رمزارز برای واریز مستقیم درآمد به کیف پول واحد",
-    masterWallet,
+      "ثبت درآمد واقعی ایجنت‌ها. مبلغ و مدرک (هش تراکنش) اجباری است — سیستم هیچ‌وقت مبلغ حدس نمی‌زند.",
+    masterWallet: {
+      address: masterWallet.address || "(هنوز ثبت نشده — از داشبورد وارد کنید)",
+      network: masterWallet.network,
+    },
     headers: {
       "Content-Type": "application/json",
       "x-agent-key": "کلید اختصاصی ایجنت (یا AGENT_MASTER_API_KEY)",
@@ -57,8 +25,15 @@ export async function GET() {
       slug: "crypto-employee",
       amountUsdt: 55,
       title: "سود آربیتراژ جفت ارز TON/USDT",
-      strategy: "arbitrage",
+      txHash: "0x...",
+      network: "BEP20",
     },
+    rules: [
+      "amountUsdt (عدد بزرگ‌تر از صفر) همیشه اجباری است.",
+      "از API خارجی: txHash واقعی اجباری است.",
+      "از داشبورد (نشست ادمین): ثبت دستی با مسئولیت مدیر.",
+      "بدون ثبت آدرس برداشت در داشبورد، هیچ درآمدی پذیرفته نمی‌شود.",
+    ],
   });
 }
 
@@ -71,6 +46,16 @@ export async function POST(req: NextRequest) {
     "";
 
   const masterWallet = await getMasterWallet();
+  if (!masterWallet.address) {
+    return NextResponse.json(
+      {
+        error:
+          "ابتدا آدرس برداشت (کیف پول متامسک) را در داشبورد ثبت کنید.",
+        need: "payout_address",
+      },
+      { status: 400 }
+    );
+  }
 
   // پیدا کردن ایجنت از طریق id، slug یا کلید API
   let targetAgent: any = null;
@@ -84,13 +69,9 @@ export async function POST(req: NextRequest) {
     targetAgent = allAgents.find((a) => a.apiKey === headerKey);
   }
 
-  // بررسی کلید امنیتی اگر درخواست از بیرون با هدر ارسال شده باشد
   const masterKey = process.env.AGENT_MASTER_API_KEY;
-  if (
-    headerKey &&
-    !targetAgent &&
-    (!masterKey || headerKey !== masterKey)
-  ) {
+  const isMasterKey = Boolean(masterKey && headerKey && headerKey === masterKey);
+  if (headerKey && !targetAgent && !isMasterKey) {
     return NextResponse.json(
       { error: "کلید API ایجنت نامعتبر است (Unauthorized)" },
       { status: 401 }
@@ -101,41 +82,48 @@ export async function POST(req: NextRequest) {
     targetAgent =
       allAgents.find((a) => a.specialty === "crypto") || allAgents[0];
   }
-
   if (!targetAgent) {
+    return NextResponse.json({ error: "هیچ ایجنتی یافت نشد" }, { status: 404 });
+  }
+
+  // اعتماد: نشست ادمین (داشبورد) یا کلید مادر. بقیه باید مدرک بدهند.
+  const trusted = Boolean(requireAdmin(req)) || isMasterKey || !headerKey && Boolean(requireAdmin(req));
+
+  const amountUsdt = Number(b.amountUsdt);
+  if (!b.amountUsdt || !(amountUsdt > 0)) {
     return NextResponse.json(
-      { error: "هیچ ایجنتی یافت نشد" },
-      { status: 404 }
+      {
+        error:
+          "مبلغ واقعی (amountUsdt بزرگ‌تر از صفر) لازم است — سیستم مبلغ حدس نمی‌زند.",
+        need: "amountUsdt",
+      },
+      { status: 400 }
     );
   }
 
-  const stratKey = b.strategy || "arbitrage";
-  const strat = cryptoStrategies[stratKey] || cryptoStrategies.arbitrage;
+  const txHash = String(b.txHash || "").trim();
+  if (!trusted && !txHash) {
+    return NextResponse.json(
+      {
+        error:
+          "برای ثبت از API خارجی، هش واقعی تراکنش (txHash) لازم است.",
+        need: "txHash",
+      },
+      { status: 400 }
+    );
+  }
 
-  const amountUsdt =
-    b.amountUsdt !== undefined && Number(b.amountUsdt) > 0
-      ? Number(b.amountUsdt)
-      : Math.round(strat.min + Math.random() * (strat.max - strat.min));
-
-  const title =
-    b.title ||
-    (targetAgent.specialty === "crypto"
-      ? strat.label
-      : `درآمد خودکار از ${targetAgent.name}`);
-
-  const txHash =
-    b.txHash ||
-    `${randomBytes(2).toString("hex")}...${randomBytes(2).toString("hex")}`;
+  const title = String(b.title || `درآمد واقعی از ${targetAgent.name}`).slice(0, 200);
+  const network = String(
+    b.network || masterWallet.network.replace("USDT-", "")
+  ).slice(0, 20);
 
   const newEarned = Number(targetAgent.earnedUsdt || 0) + amountUsdt;
   const newTasks = Number(targetAgent.tasksCompleted || 0) + 1;
 
   const [updatedAgent] = await db
     .update(agents)
-    .set({
-      earnedUsdt: newEarned,
-      tasksCompleted: newTasks,
-    })
+    .set({ earnedUsdt: newEarned, tasksCompleted: newTasks })
     .where(eq(agents.id, targetAgent.id))
     .returning();
 
@@ -147,25 +135,27 @@ export async function POST(req: NextRequest) {
       agentName: targetAgent.name,
       destinationWallet: masterWallet.address,
       amountUsdt,
-      network: masterWallet.network.replace("USDT-", ""),
-      txHash,
+      network,
+      txHash: txHash || "manual-admin",
       kind: "income",
       status: "confirmed",
     })
     .returning();
 
+  const proof = txHash ? `هش: ${txHash}` : "ثبت دستی مدیر (بدون هش)";
   const reportText =
-    b.report ||
-    (targetAgent.specialty === "crypto"
-      ? strat.report(amountUsdt, masterWallet.address)
-      : `✅ ایجنت «${targetAgent.name}» مأموریت «${title}» را تکمیل و مبلغ +${amountUsdt} USDT را به کیف پول واحد (${masterWallet.address}) واریز کرد.`);
+    `✅ ثبت درآمد واقعی\n` +
+    `• ایجنت: ${targetAgent.name}\n` +
+    `• مبلغ: +${amountUsdt} USDT\n` +
+    `• مدرک: ${proof}\n` +
+    `• مقصد برداشت: ${masterWallet.address} (${masterWallet.network})`;
 
   await db.insert(agentLogs).values({
     agent: targetAgent.name,
-    action: `واریز +${amountUsdt} USDT به کیف پول واحد`,
+    action: `ثبت درآمد واقعی +${amountUsdt} USDT`,
     status: "success",
-    detail: `${title} • مقصد: ${masterWallet.address.slice(0, 12)}... • هش: ${txHash}`,
-    durationMs: 420 + Math.round(Math.random() * 600),
+    detail: `${title} • ${proof}`,
+    durationMs: 0,
   });
 
   return NextResponse.json({

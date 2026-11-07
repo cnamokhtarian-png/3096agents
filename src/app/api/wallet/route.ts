@@ -12,18 +12,42 @@ export async function GET() {
     db.select().from(transactions).orderBy(desc(transactions.id)),
   ]);
 
+  const incomes = txList.filter(
+    (t: any) =>
+      t.kind === "income" &&
+      (t.status === "confirmed" || t.status === "completed") &&
+      Number(t.amountUsdt) > 0
+  );
+  const payouts = txList.filter(
+    (t: any) =>
+      t.kind === "payout" &&
+      ["approved", "completed"].includes(t.status) &&
+      Number(t.amountUsdt) > 0
+  );
+  const totalIncome = incomes.reduce(
+    (s: number, t: any) => s + Number(t.amountUsdt || 0),
+    0
+  );
+  const totalPaidOut = payouts.reduce(
+    (s: number, t: any) => s + Number(t.amountUsdt || 0),
+    0
+  );
+  const available = Math.max(0, totalIncome - totalPaidOut);
+
   const fleetTotal = agentList.reduce(
     (s, a) => s + Number(a.earnedUsdt || 0),
     0
   );
-  const confirmedDeposits = txList
-    .filter((t) => Number(t.amountUsdt) > 0 && t.status === "confirmed")
-    .reduce((s, t) => s + Number(t.amountUsdt), 0);
 
   return NextResponse.json({
     masterWallet,
     fleetTotal,
-    confirmedDeposits,
+    totalIncome,
+    totalPaidOut,
+    available,
+    pendingPayouts: txList.filter(
+      (t: any) => t.kind === "payout" && t.status === "pending"
+    ).length,
     agentsCount: agentList.length,
     deployment: {
       databaseConnected: true,
@@ -38,23 +62,43 @@ export async function GET() {
   });
 }
 
+function validateAddress(addr: string): string | null {
+  if (!addr) return "آدرس کیف پول خالی است.";
+  if (addr.startsWith("0x")) {
+    if (!/^0x[a-fA-F0-9]{40}$/.test(addr))
+      return "آدرس EVM (متامسک) باید با 0x شروع شود و ۴۰ کاراکتر هگز داشته باشد.";
+    return null;
+  }
+  if (addr.startsWith("T") && addr.length === 34)
+    return null; // TRON — توجه: متامسک ترون ندارد
+  return "فرمت آدرس معتبر نیست. آدرس متامسک (0x...) یا ترون (T...) وارد کنید.";
+}
+
 export async function PUT(req: NextRequest) {
   await ensureSeed();
   const b = await req.json();
+  const address = String(b.address || "").trim();
+  const network = String(b.network || "USDT-BEP20").trim();
+
+  const err = validateAddress(address);
+  if (err) {
+    return NextResponse.json({ error: err }, { status: 400 });
+  }
+  if (address.startsWith("T") && !network.includes("TRC")) {
+    return NextResponse.json(
+      { error: "آدرس ترون (T...) فقط با شبکه TRC20 سازگار است." },
+      { status: 400 }
+    );
+  }
+
   const updates: [string, string][] = [
-    ["master_wallet_address", String(b.address || "").trim()],
-    ["master_wallet_network", String(b.network || "USDT-TRC20").trim()],
-    ["auto_sweep_enabled", String(b.autoSweep !== false)],
-    [
-      "wallet",
-      `${String(b.address || "").trim()} (${String(
-        b.network || "USDT-TRC20"
-      ).trim()})`,
-    ],
+    ["master_wallet_address", address],
+    ["master_wallet_network", network],
+    ["auto_sweep_enabled", String(b.autoSweep === true)],
+    ["wallet", `${address} (${network})`],
   ];
 
   for (const [key, value] of updates) {
-    if (!value && key === "master_wallet_address") continue;
     const existing = await db
       .select()
       .from(settings)
@@ -67,11 +111,11 @@ export async function PUT(req: NextRequest) {
   }
 
   await db.insert(agentLogs).values({
-    agent: "کیف پول واحد مرکزی",
-    action: "به‌روزرسانی آدرس کیف پول واحد",
+    agent: "کیف پول برداشت",
+    action: "ثبت آدرس برداشت متامسک",
     status: "success",
-    detail: `تمام ایجنت‌ها به آدرس ${b.address} (${b.network}) متصل شدند`,
-    durationMs: 110,
+    detail: `مقصد برداشت همه ایجنت‌ها: ${address} (${network})`,
+    durationMs: 0,
   });
 
   const masterWallet = await getMasterWallet();

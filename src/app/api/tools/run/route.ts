@@ -1,12 +1,77 @@
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/db"; import { toolRuns, agentLogs } from "@/db/schema"; import { ensureSeed } from "@/lib/seed";
-export async function POST(req:NextRequest){ await ensureSeed(); const {tool,input}=await req.json();
- let output="";
- if(tool.includes("Next")) output=`✅ اسکلت Next.js ساخته شد برای «${input}»\n• app/${input} + Tailwind RTL + Vazirmatn\n• کامپوننت‌ها: Hero, Pricing (USDT), FAQ\n• آماده Deploy روی Vercel — بدون خطای TS`;
- else if(tool.includes("PPT")) output=`✅ ارائه PPTX آماده شد: «${input}»\n• ۱۶ اسلاید + نمودار + آیکون Web3\n• فایل: ${input}-pitch.pptx (۳.۸MB)\n• نسخه PDF هم ساخته شد`;
- else if(tool.includes("مترجم")||tool.includes("ترجمه")) output=`✅ ترجمه FA→EN انجام شد\nمتن ورودی: «${input}»\nخروجی: "This freelance agreement guarantees payment in USDT (TRC20) upon delivery, with full intellectual property transfer to the client."\n• ۹۸٪ دقت تخصصی — ۲۴۰ کلمه`;
- else output=`✅ ایجنت اجرا شد برای: ${input}\n• تسک تحلیل و در صف تأیید انسانی قرار گرفت`;
- const rows:any=await db.insert(toolRuns).values({tool,input,output,status:"done"}).returning();
- await db.insert(agentLogs).values({agent:tool,action:"اجرای ابزار",status:"success",detail:input,durationMs:900+Math.round(Math.random()*2000)});
- return NextResponse.json(rows[0]);
+import { db } from "@/db";
+import { toolRuns, agentLogs, settings } from "@/db/schema";
+import { ensureSeed } from "@/lib/seed";
+
+async function realTranslate(input: string): Promise<string> {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), 12000);
+  try {
+    const url =
+      "https://api.mymemory.translated.net/get?q=" +
+      encodeURIComponent(input.slice(0, 450)) +
+      "&langpair=fa|en";
+    const res = await fetch(url, { signal: ctrl.signal, cache: "no-store" });
+    clearTimeout(t);
+    if (!res.ok) throw new Error("translate api " + res.status);
+    const d = await res.json();
+    const out = d?.responseData?.translatedText;
+    if (!out) throw new Error("empty translation");
+    return out;
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+export async function POST(req: NextRequest) {
+  await ensureSeed();
+  const { tool, input } = await req.json();
+  const toolName = String(tool || "");
+  const text = String(input || "");
+  let output = "";
+  let status = "done";
+
+  if (toolName.includes("مترجم") || toolName.includes("ترجمه")) {
+    if (!text.trim()) {
+      output = "متنی برای ترجمه وارد نشده است.";
+      status = "error";
+    } else {
+      try {
+        const tr = await realTranslate(text);
+        output = `✅ ترجمه واقعی FA→EN\nورودی: «${text}»\nخروجی: «${tr}»`;
+      } catch {
+        output =
+          "سرویس ترجمه موقتاً در دسترس نیست. کمی بعد دوباره تلاش کنید.";
+        status = "error";
+      }
+    }
+  } else {
+    // بدون کلید AI نمی‌شود فایل واقعی تولید کرد — صادقانه می‌گوییم چه لازم است.
+    const rows = await db.select().from(settings);
+    const map = Object.fromEntries(rows.map((r) => [r.key, r.value]));
+    if (map.ai_api_key) {
+      output =
+        `ابزار «${toolName}» کلید AI دارد ولی موتور تولید آن در قدم بعدی ساخته می‌شود. ` +
+        `فعلاً از بخش «اتصال‌ها» وضعیت را دنبال کنید.`;
+      status = "queued";
+    } else {
+      output =
+        `برای اجرای واقعی «${toolName}» ابتدا کلید AI لازم است.\n` +
+        `از داشبورد → بخش «⚙️ اتصال‌ها» کلید OpenAI یا Gemini را وارد کنید، بعد دوباره تلاش کنید.`;
+      status = "needs_key";
+    }
+  }
+
+  const rows: any = await db
+    .insert(toolRuns)
+    .values({ tool: toolName, input: text, output, status })
+    .returning();
+  await db.insert(agentLogs).values({
+    agent: toolName,
+    action: "اجرای ابزار",
+    status: status === "done" ? "success" : status,
+    detail: text.slice(0, 120),
+    durationMs: 0,
+  });
+  return NextResponse.json(rows[0]);
 }
