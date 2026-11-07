@@ -88,14 +88,18 @@ async function menuContent(kind: string): Promise<{ text: string; keyboard: any 
   }
   if (kind === "exchange") {
     try {
-      const { getSpotBalances, getFundingBalances, getDepth } = await import(
-        "@/lib/exchange"
-      );
-      const [spot, funding, depth] = await Promise.all([
-        getSpotBalances().catch((e: any) => ({ error: e?.message })),
-        getFundingBalances().catch(() => []),
-        getDepth("BTC_IRT").catch(() => null),
+      const ex = await import("@/lib/exchange");
+      const [acct, fundRaw, depthRaw] = await Promise.all([
+        ex.getAccount().catch((e: any) => ({ __error: e?.message })),
+        ex.getFundingWallet().catch(() => null),
+        ex.getDepth("BTC_IRT").catch(() => null),
       ]);
+      const spot =
+        (acct as any)?.__error != null
+          ? { error: (acct as any).__error }
+          : ex.parseBalances(acct);
+      const funding = fundRaw ? ex.parseBalances(fundRaw) : [];
+      const depth = depthRaw ? ex.parseDepth(depthRaw) : null;
       let t = `🪙 <b>وضعیت صرافی تبدیل</b>\n\n`;
       if ((spot as any)?.error) {
         t += `⚠️ خطای موجودی: ${(spot as any).error}\n`;
