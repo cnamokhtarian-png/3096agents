@@ -476,6 +476,21 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // ثبت «تحویل» برای پیش‌نویس‌ها بعد از تأیید انسانی (بدون درآمد صوری)
+    if (newStatus === "approved" && taskId > 0) {
+      const found5: any = await db.select().from(tasks).where(eq(tasks.id, taskId));
+      const t5 = found5[0];
+      if (t5 && ["translate", "design_draft", "web_draft", "signal"].includes(t5.actionType)) {
+        await db.insert(agentLogs).values({
+          agent: t5.agent || "شرکت",
+          action: "✅ تحویل و ثبت شد",
+          status: "success",
+          detail: `${t5.title} — با تأیید مدیر تحویل شد.`,
+          durationMs: 100,
+        });
+      }
+    }
+
     await db.insert(agentLogs).values({
       agent: "Webhook تلگرام",
       action: data.startsWith("approve")

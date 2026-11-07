@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db";
 import { agents, agentLogs } from "@/db/schema";
 import { desc, eq } from "drizzle-orm";
-import { ensureSeed, getMasterWallet } from "@/lib/seed";
+import { ensureSeed, getMasterWallet, requireAdmin } from "@/lib/seed";
 import { randomBytes } from "crypto";
 
 export async function GET() {
@@ -62,6 +62,9 @@ export async function POST(req: NextRequest) {
 
 export async function PUT(req: NextRequest) {
   await ensureSeed();
+  if (!requireAdmin(req)) {
+    return NextResponse.json({ error: "نیاز به ورود مدیر" }, { status: 401 });
+  }
   const b = await req.json();
   const [updated] = await db
     .update(agents)

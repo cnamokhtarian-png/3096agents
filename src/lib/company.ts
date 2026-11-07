@@ -166,7 +166,7 @@ async function shiftBuilder(a: any): Promise<ShiftReport> {
     return ok(a, s);
   }
   const g = await geminiGenerate(
-    `تو سازنده وب هستی. برای پروژه «${needy.title}» (کارفرما: ${needy.clientName}) یک پیش‌نویس لندینگ فارسی بنویس: تیتر اصلی، زیرتیتر، ۳ ویژگی کلیدی، دعوت به اقدام. کوتاه و کاربردی.`,
+    `تو سازنده وب هستی. برای پروژه «${needy.title}» (کارفرما: ${needy.clientName}) یک پیش‌نویس لندینگ فارسی بنویس: تیتر اصلی، زیرتیتر، ۳ ویژگی کلیدی، دعوت به اقدام. کوتاه و کاربردی. در انتها یک خط جدا بنویس با فرمت: 💡 ارزش: <دلیل سودآوری در یک جمله + زمان/ارزش تخمینی>.`,
     { maxTokens: 1200 }
   );
   const t: any = await db
@@ -209,7 +209,7 @@ async function shiftCloser(a: any): Promise<ShiftReport> {
     return ok(a, s);
   }
   const g = await geminiGenerate(
-    `تو فروشنده تلگرام یک فریلنسر هستی. پیام مشتری (${m.clientName}): «${m.text}» — یک پاسخ فارسی کوتاه، مودبانه و حرفه‌ای با پیشنهاد قدم بعدی بنویس. فقط متن پاسخ.`,
+    `تو فروشنده تلگرام یک فریلنسر هستی. پیام مشتری (${m.clientName}): «${m.text}» — یک پاسخ فارسی کوتاه، مودبانه و حرفه‌ای با پیشنهاد قدم بعدی بنویس. سپس یک خط جدا با فرمت: 💡 ارزش: <چرا این پاسخ به بستن قرارداد کمک می‌کند، یک جمله>. فقط همین دو بخش.`,
     { maxTokens: 600 }
   );
   const t: any = await db
@@ -250,7 +250,7 @@ async function shiftDesigner(a: any): Promise<ShiftReport> {
   }
   const p = projs[0];
   const g = await geminiGenerate(
-    `تو طراح ارائه هستی. برای پروژه «${p.title}» (کارفرما: ${p.clientName}) ساختار یک ارائه ۷ اسلایدی فارسی بنویس: تیتر هر اسلاید + ۳ نکته کلیدی.`,
+    `تو طراح ارائه هستی. برای پروژه «${p.title}» (کارفرما: ${p.clientName}) ساختار یک ارائه ۷ اسلایدی فارسی بنویس: تیتر هر اسلاید + ۳ نکته کلیدی. در انتها یک خط جدا: 💡 ارزش: <چرا این ارائه به گرفتن پروژه کمک می‌کند، یک جمله>.`,
     { maxTokens: 1500 }
   );
   const t: any = await db
@@ -288,7 +288,7 @@ async function shiftTranslator(a: any): Promise<ShiftReport> {
     await logReport(a.name, "🌍 بررسی صف ترجمه", s);
     return ok(a, s);
   }
-  const g = await geminiGenerate(`این متن را به فارسی روان و دقیق ترجمه کن:\n\n${(m.text || "").slice(0, 2000)}`, {
+  const g = await geminiGenerate(`این متن را به فارسی روان و دقیق ترجمه کن. در انتها یک خط جدا: 💡 ارزش: <کاربرد این ترجمه در یک جمله>.\n\n${(m.text || "").slice(0, 2000)}`, {
     maxTokens: 1200,
   });
   const t: any = await db

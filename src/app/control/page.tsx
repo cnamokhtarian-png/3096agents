@@ -101,6 +101,9 @@ export default function Control() {
   const [shiftReports, setShiftReports] = useState<any[]>([]);
   const [shifting, setShifting] = useState(false);
 
+  // تیکر قیمت
+  const [ticker, setTicker] = useState<any>(null);
+
   function blankProduct() {
     return {
       title: "", clientName: "", telegramUser: "", source: "کاتالوگ خدمات",
@@ -166,9 +169,21 @@ export default function Control() {
         else setUser(d.user);
       });
     load();
+    fetch("/api/market/ticker")
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.ok) setTicker(d);
+      })
+      .catch(() => {});
     const iv = setInterval(() => {
       fetch("/api/stats").then((r) => r.json()).then(setStats).catch(() => {});
-    }, 15000);
+      fetch("/api/market/ticker")
+        .then((r) => r.json())
+        .then((d) => {
+          if (d.ok) setTicker(d);
+        })
+        .catch(() => {});
+    }, 60000);
     return () => clearInterval(iv);
   }, []);
 
@@ -483,7 +498,7 @@ export default function Control() {
     }
   }
 
-  async function runShift(agentId?: number) {
+  async function runFleet(agentId?: number) {
     setShifting(true);
     try {
       const res = await fetch(`/api/company/tick${agentId ? `?agent=${agentId}` : ""}`, { method: "POST" });
@@ -545,6 +560,23 @@ export default function Control() {
 
   return (
     <div className="min-h-screen bg-[#F6F7F9]">
+      <div className="bg-gradient-to-l from-amber-500 to-yellow-400 text-black text-xs sm:text-sm font-bold">
+        <div className="max-w-6xl mx-auto px-4 py-1.5 flex gap-5 overflow-x-auto whitespace-nowrap">
+          {!ticker ? (
+            <span>⏳ دریافت قیمت‌ها...</span>
+          ) : (
+            <>
+              <span>
+                💵 دلار: {fa(ticker.usd_toman)} تومان{ticker.usd_change ? ` (${ticker.usd_change}٪)` : ""}
+              </span>
+              <span>
+                🪙 انس طلا: {fa(ticker.xau_usd)} دلار ≈ {fa(ticker.xau_toman)} تومان
+              </span>
+              <span>₿ بیت‌کوین: {fa(ticker.btc_irt)} IRT</span>
+            </>
+          )}
+        </div>
+      </div>
       <header className="bg-[#0B1220] text-white sticky top-0 z-40">
         <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between gap-3">
           <div className="flex items-center gap-2">
@@ -601,11 +633,11 @@ export default function Control() {
                   <p className="text-slate-300 text-sm mt-1">کارمندها هر روز صبح خودکار شیفت می‌روند — یا همین حالا دستی اجرا کنید.</p>
                 </div>
                 <button
-                  onClick={() => runShift()}
+                  onClick={() => runFleet()}
                   disabled={shifting}
                   className="bg-amber-400 text-black px-6 py-2.5 rounded-full font-black disabled:opacity-50"
                 >
-                  {shifting ? "⏳ در حال اجرا..." : "▶️ شروع شیفت همه"}
+                  {shifting ? "⏳ در حال اجرا..." : "🚚 شروع به کار ناوگان"}
                 </button>
               </div>
               {shiftReports.length > 0 && (
@@ -656,7 +688,7 @@ export default function Control() {
                           : "هنوز شیفتی نرفته — «شروع شیفت» را بزنید."}
                       </p>
                       <button
-                        onClick={() => runShift(a.id)}
+                        onClick={() => runFleet(a.id)}
                         disabled={shifting}
                         className="mt-2 w-full bg-slate-900 text-white rounded-full py-1.5 text-sm font-bold disabled:opacity-50"
                       >
@@ -830,13 +862,14 @@ export default function Control() {
                       </span>
                       <button
                         onClick={() => toggleAgentStatus(ag)}
+                        title="روشن / خاموش"
                         className={`text-xs font-bold px-2.5 py-1 rounded-full ${
-                          ag.status === "active"
+                          ag.status !== "paused"
                             ? "bg-emerald-100 text-emerald-700"
                             : "bg-slate-100 text-slate-500"
                         }`}
                       >
-                        {ag.status === "active" ? "● فعال" : "⏸ متوقف"}
+                        {ag.status !== "paused" ? "● فعال" : "⏸ متوقف"}
                       </button>
                     </div>
                     <h4 className="font-black text-lg mt-2">
