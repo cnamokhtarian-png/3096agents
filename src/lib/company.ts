@@ -144,6 +144,15 @@ async function shiftCrypto(a: any): Promise<ShiftReport> {
 
 // ─── A2 · سازنده وب — پیش‌نویس سایت برای پروژه‌های جدید ───
 async function shiftBuilder(a: any): Promise<ShiftReport> {
+  const pend: any = await db
+    .select()
+    .from(tasks)
+    .where(and(eq(tasks.status, "pending"), eq(tasks.agent, a.name)));
+  if (pend.length > 0) {
+    const s = "یک پیش‌نویس منتظر تأیید شماست — تا تأیید نشود کار جدید شروع نمی‌کنم.";
+    await logReport(a.name, "🏗️ انتظار تأیید", s);
+    return ok(a, s);
+  }
   const rows: any = await db
     .select()
     .from(projects)
@@ -350,7 +359,9 @@ export async function runShift(agentId?: number): Promise<ShiftReport[]> {
       if (!fn)
         return { agentId: a.id, name: a.name, avatar: a.avatar, ran: false, summary: "وظیفه‌ای تعریف نشده." };
       try {
-        return await fn(a);
+        const r = await fn(a);
+        await logReport(a.name, "✅ گزارش شیفت", r.summary);
+        return r;
       } catch (e: any) {
         const f = faErr(e);
         await logReport(a.name, "⚠️ خطای شیفت", f.problem, "error");
