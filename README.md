@@ -78,7 +78,7 @@ Telegram (دکمه تأیید) ──► /api/telegram/webhook ──► approve
 | `TELEGRAM_BOT_TOKEN` / `TELEGRAM_ADMIN_CHAT_ID` | ربات و چت‌آیدی شما |
 | `CRON_SECRET` | کلید اجرای کرون |
 
-توصیه‌شده: `MASTER_WALLET_ADDRESS`, `MASTER_WALLET_NETWORK`, `TELEGRAM_WEBHOOK_SECRET`, `NEXT_PUBLIC_APP_URL`, `EXCHANGE_API_KEY`, `EXCHANGE_SECRET_KEY`, `EXCHANGE_TESTNET`, `AGENT_TRADING_ENABLED`, `TRONGRID_API_KEY`/`ETHERSCAN_API_KEY`, `GEMINI_API_KEY`, `AGENT_WORKER_URL`.
+توصیه‌شده: `MASTER_WALLET_ADDRESS`, `MASTER_WALLET_NETWORK`, `TELEGRAM_WEBHOOK_SECRET`, `NEXT_PUBLIC_APP_URL`, `EXCHANGE_API_KEY`, `EXCHANGE_SECRET_KEY` (نام قدیمی `EXCHANGE_API_SECRET` هم پذیرفته می‌شود), `EXCHANGE_TESTNET`, `AGENT_TRADING_ENABLED`, `TRONGRID_API_KEY`/`ETHERSCAN_API_KEY`, `GEMINI_API_KEY`, `AGENT_WORKER_URL`.
 
 فایل کامل با توضیح هر کلید: [`.env.example`](./.env.example).
 > `NEXT_PUBLIC_SUPABASE_URL` و `SUPABASE_SERVICE_ROLE_KEY` اختیاری‌اند؛ این پروژه مستقیم با Postgres کار می‌کند و برای امنیت، تنها یک مسیر دسترسی (Pooler + رول محدود) دارد.
@@ -105,6 +105,20 @@ curl -X POST "https://YOUR-APP.vercel.app/api/telegram/setup" \
   -d '{"action":"set"}'
 ```
 4. تست: `/start` و `/status` در ربات.
+
+**کجا نگهداری می‌شود (تا دیگر لازم نباشد توکن را دوباره پیدا/پیست کنید):**
+
+| محل | چه چیزی | قابل commit است؟ |
+| --- | --- | --- |
+| Vercel → Settings → Environment Variables | `TELEGRAM_BOT_TOKEN` (نوع Sensitive)، `TELEGRAM_ADMIN_CHAT_ID`, `TELEGRAM_BOT_USERNAME`, `TELEGRAM_WEBHOOK_SECRET` | نه؛ فقط در پنل Vercel |
+| فایل `.env.local` در ریشه پروژه | همان کلیدها برای اجرای محلی | نه؛ در `.gitignore` |
+| GitHub Actions Secrets (اختیاری) | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET` برای ثبت وبهوک از CI | نه؛ رمزنگاری‌شده |
+
+- توکن هرگز داخل کد یا فایل ترک‌شده قرار نمی‌گیرد (ریپو عمومی است). کد فقط `process.env.TELEGRAM_BOT_TOKEN` را می‌خواند.
+- **تعویض توکن** (Rotate): توکن جدید را از @BotFather بگیرید → در Vercel (هر سه محیط) و در `.env.local` به‌روزرسانی کنید → Redeploy → دوباره دکمه‌ی **🔗 ثبت وبهوک تلگرام** را بزنید (چون توکن عوض شده، وبهوک قبلی باطل است).
+- اگر محیطی (مثل sandbox توسعه) به `api.telegram.org` دسترسی ندارد، ثبت وبهوک را از داشبورد همان دیپلوی یا مستقیماً با این آدرس در مرورگر انجام دهید:
+  `https://api.telegram.org/bot<TOKEN>/setWebhook?url=https://YOUR-APP.vercel.app/api/telegram/webhook&secret_token=<TELEGRAM_WEBHOOK_SECRET>`
+  پاسخ `{"ok":true,...}` یعنی توکن معتبر است و وبهوک ثبت شد؛ برای بررسی: `.../getWebhookInfo`.
 
 ### گام ۵ — اتصال صرافی (آریا)
 1. ابتدا کلیدهای **Testnet** بایننس (`https://testnet.binance.vision`) را بسازید.

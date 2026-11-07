@@ -106,7 +106,7 @@ const DEFS: Def[] = [
   },
   {
     key: "EXCHANGE_SECRET_KEY",
-    label: "سکرت API صرافی",
+    label: "سکرت API صرافی (یا EXCHANGE_API_SECRET)",
     purpose: "امضای HMAC درخواست‌های سفارش",
     required: false,
     group: "exchange",
@@ -202,11 +202,21 @@ const DEFS: Def[] = [
   },
 ];
 
+const ALIASES: Record<string, string[]> = {
+  EXCHANGE_SECRET_KEY: ["EXCHANGE_API_SECRET", "BINANCE_SECRET_KEY"],
+  EXCHANGE_API_KEY: ["BINANCE_API_KEY"],
+};
+
 export function auditEnv() {
-  const checks: EnvCheck[] = DEFS.map((d) => ({ ...d, present: has(d.key) }));
+  const checks: EnvCheck[] = DEFS.map((d) => ({
+    ...d,
+    present: has(d.key) || (ALIASES[d.key] || []).some(has),
+  }));
   const missingRequired = checks.filter((c) => c.required && !c.present).map((c) => c.key);
 
-  const exchangeReady = has("EXCHANGE_API_KEY") && has("EXCHANGE_SECRET_KEY");
+  const exchangeReady =
+    (has("EXCHANGE_API_KEY") || has("BINANCE_API_KEY")) &&
+    (has("EXCHANGE_SECRET_KEY") || has("EXCHANGE_API_SECRET") || has("BINANCE_SECRET_KEY"));
   const tradingEnabled = String(process.env.AGENT_TRADING_ENABLED).toLowerCase() === "true";
 
   return {
@@ -241,8 +251,16 @@ export const ENV = {
   telegramToken: () => process.env.TELEGRAM_BOT_TOKEN?.trim() || "",
   telegramAdminChat: () => process.env.TELEGRAM_ADMIN_CHAT_ID?.trim() || "",
   telegramSecret: () => process.env.TELEGRAM_WEBHOOK_SECRET?.trim() || "",
-  exchangeKey: () => process.env.EXCHANGE_API_KEY?.trim() || "",
-  exchangeSecret: () => process.env.EXCHANGE_SECRET_KEY?.trim() || "",
+  // پذیرش نام‌های رایج هر دو سبک (سازگاری با envهای موجود در Vercel)
+  exchangeKey: () =>
+    process.env.EXCHANGE_API_KEY?.trim() ||
+    process.env.BINANCE_API_KEY?.trim() ||
+    "",
+  exchangeSecret: () =>
+    process.env.EXCHANGE_SECRET_KEY?.trim() ||
+    process.env.EXCHANGE_API_SECRET?.trim() ||
+    process.env.BINANCE_SECRET_KEY?.trim() ||
+    "",
   exchangeTestnet: () => String(process.env.EXCHANGE_TESTNET).toLowerCase() === "true",
   tradingEnabled: () => String(process.env.AGENT_TRADING_ENABLED).toLowerCase() === "true",
   geminiKey: () => process.env.GEMINI_API_KEY?.trim() || "",
