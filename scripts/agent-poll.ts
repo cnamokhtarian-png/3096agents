@@ -11,7 +11,7 @@
  *      اگر تسکی نهی، هیچ پیامی ارسال نمی‌شود و فقط noop در کنسول ثبت می‌شود.
  *
  * اسکریپت کاملاً Self-Contained است (بدون’import از مسیر @/ و بدون وابستگی به Next.js)
- * تا بتواند به صورت সরাসری با `node --experimental-strip-types` اجرا شود.
+ * تا بتواند به صورت مستقیم با `node --experimental-strip-types` اجرا شود.
  *
  * اجرا:
  *   npm run poll:tasks          # لوپ مداوم (Ctrl+C برای متوقف کردن)
@@ -61,6 +61,39 @@ const pool = new Pool({
 });
 
 const db = drizzle(pool, { schema });
+
+/** جداول مورد نیاز را در اولین اجرا می‌سازد (idempotent). */
+async function queryWithRetry<T>(fn: () => Promise<T>, retries = 3): Promise<T> {
+  let lastErr: any;
+  for (let i = 0; i < retries; i++) {
+    try {
+      return await fn();
+    } catch (e: any) {
+      lastErr = e;
+      if (i < retries - 1) await sleep(1500);
+    }
+  }
+  throw lastErr;
+}
+
+async function ensureTables(): Promise<void> {
+  const stmts = [
+    `CREATE SCHEMA IF NOT EXISTS agentos`,
+    `CREATE TABLE IF NOT EXISTS agentos.settings (id SERIAL PRIMARY KEY, key TEXT NOT NULL UNIQUE, value TEXT NOT NULL DEFAULT '')`,
+    `CREATE TABLE IF NOT EXISTS agentos.cron_runs (id SERIAL PRIMARY KEY, job TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'ok', detail TEXT NOT NULL DEFAULT '', duration_ms INTEGER NOT NULL DEFAULT 0, started_at TIMESTAMPTZ DEFAULT NOW(), finished_at TIMESTAMPTZ)`,
+    `CREATE TABLE IF NOT EXISTS agentos.system_events (id BIGSERIAL PRIMARY KEY, level TEXT NOT NULL DEFAULT 'info', scope TEXT NOT NULL DEFAULT 'app', message TEXT NOT NULL, meta JSONB NOT NULL DEFAULT '{}'::jsonb, created_at TIMESTAMPTZ DEFAULT NOW())`,
+    `CREATE TABLE IF NOT EXISTS agentos.agents (id SERIAL PRIMARY KEY, name TEXT NOT NULL, slug TEXT NOT NULL UNIQUE, role TEXT NOT NULL DEFAULT 'admin', specialty TEXT NOT NULL DEFAULT 'crypto', avatar TEXT NOT NULL DEFAULT '🤖', status TEXT NOT NULL DEFAULT 'active', api_endpoint TEXT NOT NULL DEFAULT '/api/agents/ingest', api_key TEXT NOT NULL, earned_usdt REAL NOT NULL DEFAULT 0, tasks_completed INTEGER NOT NULL DEFAULT 0, payout_mode TEXT NOT NULL DEFAULT 'auto_unified', strategy TEXT NOT NULL DEFAULT '', department TEXT NOT NULL DEFAULT '', goal_title TEXT NOT NULL DEFAULT '', goal_target_usdt REAL NOT NULL DEFAULT 0, office_floor TEXT NOT NULL DEFAULT '1', office_room TEXT NOT NULL DEFAULT '', current_focus TEXT NOT NULL DEFAULT '', success_count INTEGER NOT NULL DEFAULT 0, error_count INTEGER NOT NULL DEFAULT 0, last_active_at TIMESTAMPTZ, created_at TIMESTAMP DEFAULT NOW())`,
+    `CREATE TABLE IF NOT EXISTS agentos.agent_jobs (id SERIAL PRIMARY KEY, agent_id INTEGER, agent_name TEXT NOT NULL, kind TEXT NOT NULL, title TEXT NOT NULL, detail TEXT NOT NULL DEFAULT '', payload JSONB NOT NULL DEFAULT '{}'::jsonb, status TEXT NOT NULL DEFAULT 'queued', risk TEXT NOT NULL DEFAULT 'medium', requires_approval BOOLEAN NOT NULL DEFAULT TRUE, attempts INTEGER NOT NULL DEFAULT 0, result JSONB, error TEXT NOT NULL DEFAULT '', approved_by TEXT NOT NULL DEFAULT '', approved_at TIMESTAMPTZ, started_at TIMESTAMPTZ, finished_at TIMESTAMPTZ, telegram_message_id BIGINT, created_at TIMESTAMPTZ DEFAULT NOW())`,
+  ];
+  for (const s of stmts) {
+    try {
+      await queryWithRetry(() => pool.query(s));
+    } catch (e: any) {
+      const m = e.message || "";
+      if (!m.includes("already exists")) console.log("[agent-poll] جداول:", m.slice(0, 100));
+    }
+  }
+}
 
 let running = true;
 for (const sig of ["SIGINT", "SIGTERM"]) {
@@ -138,65 +171,67 @@ async function insertSystemEvent(level: string, scope: string, message: string, 
 
 async function runCycle(): Promise<{ jobsSent: number; activeAgents: number; error?: string }> {
   const started = Date.now();
-  let jobsSent = 0;
-  let activeAgents = 0;
-
   try {
-    activeAgents = await countActiveAgents();
-    const lastId = await getLastJobId();
+    return await queryWithRetry(async () => {
+      let jobsSent = 0;
+      let activeAgents = 0;
 
-    const jobs = await db
-      .select()
-      .from(schema.agentJobs)
-      .where(
-        and(
-          eq(schema.agentJobs.status, "queued"),
-          eq(schema.agentJobs.requiresApproval, false),
-          gt(schema.agentJobs.id, lastId)
+      activeAgents = await countActiveAgents();
+      const lastId = await getLastJobId();
+
+      const jobs = await db
+        .select()
+        .from(schema.agentJobs)
+        .where(
+          and(
+            eq(schema.agentJobs.status, "queued"),
+            eq(schema.agentJobs.requiresApproval, false),
+            gt(schema.agentJobs.id, lastId)
+          )
         )
-      )
-      .orderBy(asc(schema.agentJobs.id))
-      .limit(BATCH_LIMIT);
+        .orderBy(asc(schema.agentJobs.id))
+        .limit(BATCH_LIMIT);
 
-    if (jobs.length === 0) {
-      console.log(
-        `[agent-poll] ${new Date().toISOString()} — تسکی در صف نیست (تعداد تسک جدید: ۰) | کارمندان فعال: ${activeAgents}`
-      );
-    }
-
-    let maxId = lastId;
-    for (const job of jobs) {
-      const text =
-        `🆕 <b>تسک جدید در صف ایجنت‌ها</b>\n` +
-        `🔢 شماره: <code>#${job.id}</code>\n` +
-        `👤 کارمند: ${escapeHtml(job.agentName)} (ID: ${job.agentId ?? "—"})\n` +
-        `📋 عنوان: ${escapeHtml(job.title)}\n` +
-        `🔧 نوع: <code>${escapeHtml(job.kind)}</code> | ریسک: <code>${escapeHtml(job.risk)}</code>\n` +
-        `📝 توضیحات: ${escapeHtml(job.detail || "—")}\n` +
-        `⏰ ثبت‌شده: ${job.createdAt}\n` +
-        `💡 مقدارهای بالا از جدول واقعی agentJobs خوانده شده‌اند؛ هیچmade-up/شبیه‌سازی‌ای در این پیام نیست.`;
-
-      const res = await tgSendMessage(text);
-      if (!res.ok) {
-        console.error(`[agent-poll] خطای ارسال کارت تسک #${job.id}: ${res.description || res.error}`);
-        await insertSystemEvent("error", "agent_poll", `ارسال کارت تسک #${job.id} به تلگرام ناموفق بود`, {
-          jobId: job.id,
-          error: res.error,
-          description: res.description,
-        });
-      } else {
-        jobsSent++;
-        console.log(`[agent-poll] کارت تسک #${job.id} به تلگرام ارسال شد.`);
+      if (jobs.length === 0) {
+        console.log(
+          `[agent-poll] ${new Date().toISOString()} — تسکی در صف نیست (تعداد تسک جدید: ۰) | کارمندان فعال: ${activeAgents}`
+        );
       }
 
-      if (Number(job.id) > maxId) maxId = Number(job.id);
-    }
+      let maxId = lastId;
+      for (const job of jobs) {
+        const text =
+          `🆕 <b>تسک جدید در صف ایجنت‌ها</b>\n` +
+          `🔢 شماره: <code>#${job.id}</code>\n` +
+          `👤 کارمند: ${escapeHtml(job.agentName)} (ID: ${job.agentId ?? "—"})\n` +
+          `📋 عنوان: ${escapeHtml(job.title)}\n` +
+          `🔧 نوع: <code>${escapeHtml(job.kind)}</code> | ریسک: <code>${escapeHtml(job.risk)}</code>\n` +
+          `📝 توضیحات: ${escapeHtml(job.detail || "—")}\n` +
+          `⏰ ثبت‌شده: ${job.createdAt}\n` +
+          `💡 مقدارهای بالا از جدول واقعی agentJobs خوانده شده‌اند؛ هیچmade-up/شبیه‌سازی‌ای در این پیام نیست.`;
 
-    if (maxId > lastId) await saveLastJobId(maxId);
+        const res = await tgSendMessage(text);
+        if (!res.ok) {
+          console.error(`[agent-poll] خطای ارسال کارت تسک #${job.id}: ${res.description || res.error}`);
+          await insertSystemEvent("error", "agent_poll", `ارسال کارت تسک #${job.id} به تلگرام ناموفق بود`, {
+            jobId: job.id,
+            error: res.error,
+            description: res.description,
+          });
+        } else {
+          jobsSent++;
+          console.log(`[agent-poll] کارت تسک #${job.id} به تلگرام ارسال شد.`);
+        }
 
-    await insertCronRun("agent_poll", "ok", JSON.stringify({ jobsSent, activeAgents, checkedAt: new Date().toISOString() }), Date.now() - started);
+        if (Number(job.id) > maxId) maxId = Number(job.id);
+      }
 
-    return { jobsSent, activeAgents };
+      if (maxId > lastId) await saveLastJobId(maxId);
+
+      await insertCronRun("agent_poll", "ok", JSON.stringify({ jobsSent, activeAgents, checkedAt: new Date().toISOString() }), Date.now() - started);
+
+      return { jobsSent, activeAgents };
+    });
   } catch (e: any) {
     const message = e?.message || String(e);
     console.error("[agent-poll] خطای چکر:", message);
@@ -209,6 +244,8 @@ async function runCycle(): Promise<{ jobsSent: number; activeAgents: number; err
 async function main(): Promise<void> {
   console.log("[agent-poll] شروع لوپ بررسی تسک‌های ایجنت‌ها (بدون Mock)");
   console.log(`[agent-poll] فاصله‌ی بررسی: ${intervalMs / 60000} دقیقه | حالت یک‌باره: ${once}`);
+
+  await ensureTables();
 
   await runCycle();
   if (once) {
