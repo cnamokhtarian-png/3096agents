@@ -201,17 +201,105 @@ curl -X POST https://YOUR-APP.vercel.app/api/agents/ingest \
 
 ---
 
-## ۷) اجرای محلی
+## ۷) پرونده‌ی دائمی کلیدها (لحظه‌ای گم نمی‌شوند)
+
+این پروژه یک **لایه‌ی پیکربندی پایدار** دارد تا کلیدهای API با هر بازنویسی کد از بیرون نروند.
+
+### منبع حقیقت واحد: `config.json`
+
+فایل `config.json` در ریشه‌ی پروژه، **پرونده‌ی دائمی کلیدها** است. تمام ماژول‌ها از طریق `conf()` در `src/lib/config.ts` مقدارها را می‌خوانند و **هرگز مستقیماً `process.env` را صدا نمی‌زنند**.
+
+### ترتیب اولویت خواندن (اولین مقدار معتبر برنده است)
+
+```
+۱) متغیر محیطی Vercel / سیستم‌عامل   ← پایدار بین همه‌ی دیپلوی‌ها
+۲) config.json                          ← پرونده‌ی دائمی داخل مخزن
+۳) .env.local / .env                   ← فقط توسعه‌ی محلی
+```
+
+بنابراین تا وقتی `config.json` یا متغیرهای محیطی دست‌نخورده باشند، **هیچ کلیدی با تغییر کد از کار نمی‌افتد**.
+
+### ثبت کامل کلیدها
+
+| کلید | کارکرد | وضعیت |
+| --- | --- | --- |
+| `GEMINI_API_KEY` | مغز متفکر: نوشتن گزارش وضعیت ایجنت‌ها | ✅ ست شده |
+| `GEMINI_MODEL` | مدل پیش‌فرض جمینای | ✅ `gemini-2.0-flash` |
+| `TELEGRAM_BOT_TOKEN` | پل ارتباطی با تلگرام + دکمه‌های تأیید | ✅ ست شده |
+| `TELEGRAM_ADMIN_CHAT_ID` | مقصد ارسال درخواست‌های تأیید | ✅ `7590237754` |
+| `TELEGRAM_CHAT_ID` | چت‌آیدی اصلی | ✅ `7590237754` |
+| `TELEGRAM_BOT_USERNAME` | نام ربات | ✅ `sina_freelance_agent_bot` |
+| `TELEGRAM_WEBHOOK_SECRET` | سکرت وبهوک (رد درخواست جعلی) | ✅ ست شده |
+| `DATABASE_URL` | اتصال Pooler سوپابیس (پورت ۶۵۴۳) | ✅ ست شده |
+| `DIRECT_URL` | اتصال مستقیم برای migration (پورت ۵۴۳۲) | ✅ ست شده |
+| `NEXT_PUBLIC_SUPABASE_URL` | آدرس پروژه‌ی سوپابیس | ✅ ست شده |
+| `SUPABASE_SERVICE_ROLE_KEY` | Service Role Key | ✅ ست شده |
+| `EXCHANGE_API_KEY` | کلید API صرافی برای ایجنت تریدر (آریا) | ✅ ست شده |
+| `EXCHANGE_SECRET_KEY` | سکرت امضای HMAC سفارش‌ها | ✅ ست شده |
+| `EXCHANGE_API_SECRET` | نام جایگزین همان سکرت | ✅ ست شده |
+| `EXCHANGE_TESTNET` | `true` → سفارش‌ها روی Testnet | ✅ `true` (امن) |
+| `AGENT_TRADING_ENABLED` | قفل ایمنی ارسال سفارش واقعی | ✅ `false` (قفل) |
+| `ADMIN_EMAIL` | ایمیل مدیرعامل | ✅ `admin@freelance.ir` |
+| `ADMIN_PASSWORD` | رمز ورود مدیر | ✅ ست شده |
+| `AUTH_SECRET` | کلید امضای نشست (HMAC) | ✅ ست شده |
+| `ADMIN_API_SECRET` | دسترسی ماشین‌به‌ماشین (هدر `x-admin-secret`) | ✅ ست شده |
+| `AGENT_MASTER_API_KEY` | کلید سراسری ربات‌های بیرونی | ✅ ست شده |
+| `CRON_SECRET` | اجازه‌ی اجرای `/api/cron/tick` | ✅ ست شده |
+| `MASTER_WALLET_ADDRESS` | مقصد واریز درآمد همه‌ی کارمندان | ✅ ست شده |
+| `MASTER_WALLET_NETWORK` | شبکه‌ی کیف پول واحد | ✅ `BEP20` |
+| `TRONGRID_API_KEY` | تأیید خودکار واریز TRC20 | ⚪️ اختیاری |
+| `ETHERSCAN_API_KEY` | تأیید خودکار واریز ERC20/BEP20 | ⚪️ اختیاری |
+| `AGENT_WORKER_URL` | وبهوک اجرای واقعی ابزارها (n8n) | ⚪️ اختیاری |
+| `AGENT_WORKER_TOKEN` | توکن احراز هویت ورکر | ⚪️ اختیاری |
+| `NEXT_PUBLIC_APP_URL` | دامنه‌ی عمومی (ساخت آدرس وبهوک) | ✅ ست شده |
+
+### چطور تغییرشان بدهیم؟
 
 ```bash
-cp .env.example .env.local     # مقادیر را پر کنید
+# ۱) ویرایش پرونده‌ی دائمی (ساختارش در config.example.json است)
+nano config.json
+
+# ۲) بررسی اینکه همه‌چیز درست resolve می‌شود
+npm run verify:config
+
+# ۳) اگر Vercel را هم به‌روز کردی، یک Redeploy لازم است
+```
+
+`npm run verify:config` همه‌ی کلیدها را چک می‌کند و **با پاک کردن کامل `process.env` دوباره می‌خواند** تا ثابت شود که کلیدها فقط به env وابسته نیستند.
+
+### ⚠️ نکته‌ی امنیتی (مهم)
+
+`config.json` در `.gitignore` است و **نباید** به گیت commit شود. ساختار آن در `config.example.json` (بدون هیچ مقدار واقعی) نگهداری می‌شود.
+
+برای اینکه کلیدها در هیچ شرایطی از بین نروند، **هر دو لایه** را نگه دار:
+
+1. **Vercel Environment Variables** (نوع `sensitive`) — پایدار بین همه‌ی دیپلوی‌ها و بکاپ‌شده در حساب Vercel.
+2. **`config.json`** — پرونده‌ی دائمی داخل مخزن، برای وقتی که می‌خواهی کلیدها در پروژه «میخکوب» بمانند.
+
+اگر یکی پاک شود، دیگری کار را ادامه می‌دهد. چون `config.json` در گیت نیست، توصیه می‌شود یک کپی رمزگذاری‌شده از آن جدا از گیت نگه داری.
+
+### چرخش (Rotation) کلیدها
+
+- **تلگرام**: `@BotFather` → `/token` → کلید جدید → مقدار جدید در `config.json` **و** Vercel → Redeploy → `POST /api/telegram/setup`.
+- **صرافی**: Binance → API Management → کلید جدید → `EXCHANGE_API_KEY` + `EXCHANGE_SECRET_KEY` → Redeploy.
+- **جمینای**: Google AI Studio → کلید جدید → `GEMINI_API_KEY` → Redeploy.
+
+---
+
+## ۸) اجرای محلی
+
+```bash
+cp config.example.json config.json   # پرونده‌ی دائمی کلیدها (ساختار را کپی کنید)
+cp .env.example .env.local           # فقط برای توسعه‌ی محلی
 npm install
-npm run dev                    # http://localhost:3000
+npm run verify:config                # مطمئن شوید همه‌ی کلیدها resolve می‌شوند
+npm run dev                          # http://localhost:3000
 ```
 
 - `DATABASE_URL` لوکال: `postgres://user:pass@127.0.0.1:5432/postgres`
-- ساخت جدول‌ها: `psql "$DATABASE_URL" -f supabase/schema.sql`
+- ساخت جدول‌ها: `psql "$DIRECT_URL" -f supabase/schema.sql`
 - ورود: `ADMIN_EMAIL` / `ADMIN_PASSWORD`
+- **نکته:** کلیدها از `config.json` خوانده می‌شوند؛ `.env.local` فقط لایه‌ی کمکی توسعه است.
 
 ---
 
@@ -219,7 +307,8 @@ npm run dev                    # http://localhost:3000
 
 ```
 src/lib/
-  env.ts             چک‌لیست متغیرها + ConfigError
+  config.ts          ⭐ لایه‌ی پیکربندی پایدار: conf() → env → config.json → .env.local
+  env.ts             چک‌لیست متغیرها + ConfigError + موجودی پرونده‌ی دائمی
   auth.ts            نشست HttpOnly + محافظت از عملیات حساس
   telegram.ts        کلاینت واقعی Bot API (کیبورد شیشه‌ای، ویرایش، وبهوک)
   exchange.ts        Binance Spot/Testnet (امضا HMAC، سفارش، موجودی، قیمت)
