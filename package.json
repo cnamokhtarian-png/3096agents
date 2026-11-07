@@ -8,7 +8,8 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "verify:config": "node --experimental-strip-types scripts/verify-config.ts",
-    "verify:admin": "node --experimental-strip-types scripts/verify-admin-password.ts"
+    "verify:admin": "node --experimental-strip-types scripts/verify-admin-password.ts",
+    "poll:tasks": "node --experimental-strip-types scripts/agent-poll.ts"
   },
   "dependencies": {
     "dotenv": "17.3.1",
