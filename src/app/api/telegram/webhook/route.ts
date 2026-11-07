@@ -440,6 +440,42 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // ثبت پاداش در درآمدها بعد از تأیید انسانی (B7)
+    if (newStatus === "approved" && taskId > 0) {
+      const found4: any = await db.select().from(tasks).where(eq(tasks.id, taskId));
+      const t4 = found4[0];
+      if (t4?.actionType === "bounty") {
+        let p: any = {};
+        try {
+          p = JSON.parse(t4.payload || "{}");
+        } catch {}
+        const bTitle = `🎁 پاداش تأییدشده: ${(t4.title || "").replace("🎁 پاداش: ", "").slice(0, 80)}`;
+        const dup4: any = await db.select().from(transactions).where(eq(transactions.title, bTitle));
+        if (dup4.length === 0) await db.insert(transactions).values({
+          title: `🎁 پاداش تأییدشده: ${(t4.title || "").replace("🎁 پاداش: ", "").slice(0, 80)}`,
+          projectTitle: "شکار پاداش",
+          agentName: t4.agent || "B7 · شکارچی پاداش",
+          destinationWallet: "",
+          amountUsdt: Number(p.reward_usdt) || 0,
+          network: "—",
+          txHash: "",
+          kind: "income",
+          status: "confirmed",
+        });
+        const ac4 = process.env.TELEGRAM_ADMIN_CHAT_ID;
+        if (ac4 && dup4.length === 0) {
+          await sendRealTelegramMessage(
+            ac4,
+            `💰 <b>پاداش در درآمدها ثبت شد.</b>${
+              Number(p.reward_usdt) > 0
+                ? `\nمبلغ: ${p.reward_usdt} USDT`
+                : `\nمبلغ توکنی/نامشخص — بعد از دریافت واقعی، مبلغ را اصلاح کنید.`
+            }\n🔗 ${p.link || ""}`
+          );
+        }
+      }
+    }
+
     await db.insert(agentLogs).values({
       agent: "Webhook تلگرام",
       action: data.startsWith("approve")

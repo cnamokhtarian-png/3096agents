@@ -1287,6 +1287,12 @@ export default function Control() {
               </div>
             </div>
             <div className="bg-white border rounded-3xl p-5">
+              <h3 className="font-black text-lg">🎯 منابع شکار پاداش (B7)</h3>
+              <p className="text-xs text-slate-500 mt-1">آدرس فیدها را با کاما یا خط جدید جدا کنید.</p>
+              <textarea value={fieldVals["bounty_sources"] || ""} onChange={(e) => setFieldVals((p) => ({ ...p, bounty_sources: e.target.value }))} placeholder={(setup?.fields || []).find((f: any) => f.key === "bounty_sources")?.masked || "https://..."} className="w-full border rounded-xl p-2.5 text-sm font-mono mt-2" dir="ltr" rows={2} />
+              <button onClick={() => saveField("bounty_sources")} className="bg-slate-900 text-white px-4 py-2 rounded-xl font-bold text-sm mt-2">ذخیره منابع</button>
+            </div>
+            <div className="bg-white border rounded-3xl p-5">
               <h3 className="font-black text-lg">🛡️ سقف‌های ریسک معامله</h3>
               <div className="grid md:grid-cols-4 gap-2 mt-3">
                 <div>

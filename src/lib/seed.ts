@@ -113,6 +113,9 @@ export async function ensureSeed() {
         { key: "risk_require_sl", value: "true" },
         { key: "trade_signal_drop_pct", value: "3" },
         { key: "a1_last_btc", value: "" },
+        { key: "bounty_sources", value: "https://airdrops.io/feed/" },
+        { key: "bounty_seen", value: "[]" },
+        { key: "bounty_min_score", value: "70" },
       ])
       .onConflictDoNothing();
 
@@ -208,6 +211,21 @@ export async function ensureSeed() {
             payoutMode: "manual_approval",
             strategy:
               "ثبت درآمد ربات‌ها و سرویس‌های بیرونی فقط با مبلغ و هش واقعی.",
+          },
+          {
+            name: "B7 · شکارچی پاداش",
+            slug: "bounty-hunter",
+            role: "شکار ایردراپ، پاداش ثبت‌نام و کمپین رایگان",
+            specialty: "crypto",
+            avatar: "🎯",
+            status: "active",
+            apiEndpoint: "/api/company/tick",
+            apiKey: "ag_live_bounty_hunter",
+            earnedUsdt: 0,
+            tasksCompleted: 0,
+            payoutMode: "manual_approval",
+            strategy:
+              "شکار از فیدها، حقیقت‌سنجی ضداسکم، کارت تأیید به تلگرام.",
           },
         ])
         .onConflictDoNothing();

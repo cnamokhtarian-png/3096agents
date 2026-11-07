@@ -331,7 +331,131 @@ async function shiftAuditor(a: any): Promise<ShiftReport> {
   return ok(a, s);
 }
 
+// ─── B7 · شکارچی پاداش — شکار ایردراپ از فیدها + حقیقت‌سنجی ضداسکم ───
+function parseFeed(xml: string): { title: string; link: string; desc: string }[] {
+  const items: { title: string; link: string; desc: string }[] = [];
+  const blocks = xml.split(/<item[\s>]/i).slice(1, 12);
+  for (const b of blocks) {
+    const pick = (tag: string) => {
+      const m = b.match(new RegExp(`<${tag}[^>]*>([\\s\\S]*?)<\\/${tag}>`, "i"));
+      let s = m ? m[1] : "";
+      s = s
+        .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1")
+        .replace(/<[^>]*>/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+      return s;
+    };
+    const title = pick("title").slice(0, 200);
+    const link = pick("link").slice(0, 300);
+    const desc = pick("description").slice(0, 800);
+    if (title && link) items.push({ title, link, desc });
+  }
+  return items;
+}
+
+async function shiftBounty(a: any): Promise<ShiftReport> {
+  const minScore = Number(await getSetting("bounty_min_score") || 70);
+  const rawSources = await getSetting("bounty_sources");
+  const sources = rawSources
+    .split(/[\n,]+/)
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .slice(0, 3);
+  if (sources.length === 0) {
+    const s = "منبع شکاری ثبت نشده — آماده‌باش.";
+    await logReport(a.name, "🎯 بررسی منابع", s);
+    return {
+      ...ok(a, s),
+      problem: "هیچ فید/سایتی برای شکار ثبت نشده.",
+      fix: "در داشبورد ← ⚙️ اتصال‌ها ← «منابع شکار پاداش» را وارد کنید.",
+    };
+  }
+  let seen: string[] = [];
+  try {
+    seen = JSON.parse((await getSetting("bounty_seen")) || "[]");
+  } catch {}
+  const fresh: { title: string; link: string; desc: string }[] = [];
+  for (const src of sources) {
+    try {
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 12000);
+      const res = await fetch(src, {
+        signal: ctrl.signal,
+        headers: { "User-Agent": "Mozilla/5.0" },
+      });
+      clearTimeout(t);
+      if (!res.ok) continue;
+      const xml = (await res.text()).slice(0, 250000);
+      for (const it of parseFeed(xml)) {
+        if (!seen.includes(it.link) && fresh.length < 5) {
+          fresh.push(it);
+          seen.push(it.link);
+        }
+      }
+    } catch {}
+  }
+  await setSetting("bounty_seen", JSON.stringify(seen.slice(-200)));
+  if (fresh.length === 0) {
+    const s = "چیز جدیدی در فیدها نیست — آماده‌باش.";
+    await logReport(a.name, "🎯 گشت شکار", s);
+    return ok(a, s);
+  }
+  // یک فراخوان دسته‌ای: استخراج پاداش + زمان + نمره ضداسکم
+  const g = await geminiGenerate(
+    `تو کارشناس ضداسکم ایردراپ هستی. برای هر مورد زیر یک عضو آرایه JSON بساز (فقط آرایه JSON، بدون متن اضافه):\n` +
+      fresh.map((f, i) => `${i + 1}. ${f.title} — ${f.desc.slice(0, 400)}`).join("\n") +
+      `\n\nقالب هر عضو: {"reward":"مبلغ/توضیح پاداش به فارسی","reward_usdt":عدد (اگر به دلار/تتر گفته نشده 0),"time_min":زمان تخمینی دقیقه (عدد),"score":نمره اعتماد 0 تا 100,"verdict":"ok یا suspicious یا scam","reason":"دلیل کوتاه فارسی"}\nقوانین: درخواست کلید خصوصی/عبارت بازیابی/واریز مقدماتی = scam؛ وعده سود قطعی غیرواقعی = suspicious؛ پروژه شناخته‌شده بدون پیش‌شرط پولی = ok.`,
+    { maxTokens: 2000 }
+  );
+  let arr: any[] = [];
+  try {
+    const m = g.text.match(/\[[\s\S]*\]/);
+    arr = m ? JSON.parse(m[0]) : [];
+  } catch {
+    arr = [];
+  }
+  let made = 0;
+  for (let i = 0; i < fresh.length && made < 3; i++) {
+    const v = arr[i];
+    if (!v || v.verdict !== "ok" || Number(v.score) < minScore) continue;
+    const f = fresh[i];
+    const t: any = await db
+      .insert(tasks)
+      .values({
+        title: `🎁 پاداش: ${f.title.slice(0, 80)}`,
+        agent: a.name,
+        actionType: "bounty",
+        description: `⏱ ~${v.time_min} دقیقه | 🛡️ نمره ${v.score}/100 | ${v.reason || ""}`.slice(0, 300),
+        projectTitle: "شکار پاداش",
+        status: "pending",
+        risk: "medium",
+        payload: JSON.stringify({
+          link: f.link,
+          reward: v.reward,
+          reward_usdt: Number(v.reward_usdt) || 0,
+          time_min: Number(v.time_min) || 0,
+          score: v.score,
+        }),
+      })
+      .returning();
+    await bumpDone(a.id);
+    await sendAdminCard(
+      `🎁 <b>پاداش پیدا شد (B7)</b>\n\n<b>${f.title}</b>\n💰 ${v.reward}\n⏱ زمان تخمینی: ~${v.time_min} دقیقه\n🛡️ اعتماد: ${v.score}/100 (${v.reason || ""})\n🔗 ${f.link}\n\nتأیید = ثبت در درآمدها ✅`,
+      t[0].id
+    );
+    made++;
+  }
+  const s =
+    made > 0
+      ? `${made} پاداش معتبر پیدا و برای تأیید فرستاده شد.`
+      : `${fresh.length} مورد جدید بررسی شد ولی هیچ‌کدام حد نصاب اعتماد (${minScore}) را نگرفت.`;
+  await logReport(a.name, "🎯 گشت شکار", s);
+  return ok(a, s);
+}
+
 const SHIFTS: Record<string, (a: any) => Promise<ShiftReport>> = {
+  "bounty-hunter": shiftBounty,
   "crypto-employee": shiftCrypto,
   "nextjs-builder": shiftBuilder,
   "telegram-closer": shiftCloser,

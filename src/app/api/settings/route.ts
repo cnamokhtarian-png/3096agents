@@ -15,6 +15,7 @@ const FIELDS = [
   { key: "risk_max_trade_pct", label: "سقف ریسک هر معامله (٪)", secret: false },
   { key: "risk_max_leverage", label: "سقف اهرم", secret: false },
   { key: "risk_require_sl", label: "حد ضرر اجباری", secret: false },
+  { key: "bounty_sources", label: "منابع شکار پاداش (فید)", secret: false },
 ] as const;
 
 // چک‌لیست «از شما چه لازم داریم»

@@ -65,6 +65,28 @@ export async function PUT(req: NextRequest) {
     .set(data)
     .where(eq(table.id, Number(id)))
     .returning();
+  // تأیید پاداش از داشبورد هم مثل تلگرام در درآمدها ثبت می‌شود (B7)
+  if (t === "tasks" && (data as any).status === "approved" && rows[0]?.actionType === "bounty") {
+    let p: any = {};
+    try {
+      p = JSON.parse(rows[0].payload || "{}");
+    } catch {}
+    const { transactions } = await import("@/db/schema");
+    const dup: any = await db.select().from(transactions).where(eq(transactions.title, `🎁 پاداش تأییدشده: ${(rows[0].title || "").replace("🎁 پاداش: ", "").slice(0, 80)}`));
+    if (dup.length === 0) {
+      await db.insert(transactions).values({
+        title: `🎁 پاداش تأییدشده: ${(rows[0].title || "").replace("🎁 پاداش: ", "").slice(0, 80)}`,
+        projectTitle: "شکار پاداش",
+        agentName: rows[0].agent || "B7 · شکارچی پاداش",
+        destinationWallet: "",
+        amountUsdt: Number(p.reward_usdt) || 0,
+        network: "—",
+        txHash: "",
+        kind: "income",
+        status: "confirmed",
+      });
+    }
+  }
   return NextResponse.json(rows[0]);
 }
 
