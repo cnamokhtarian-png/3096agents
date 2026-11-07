@@ -13,6 +13,7 @@ import {
 import { recordAgentError } from "@/lib/agent-execution";
 import { currentUser } from "@/lib/auth";
 import { generateCooExecutiveReport, runFleetCycle } from "@/lib/coo";
+import { runAutonomousLoop } from "@/lib/autoloop";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -28,6 +29,12 @@ export const maxDuration = 60;
  *   expire    → منقضی کردن تأییدهای قدیمی
  *   reports   → گزارش روزانه هر کارمند را به تلگرام می‌فرستد
  *   cleanup   → رویدادهای قدیمی سیستم را پاک می‌کند
+ *   loop      → یک تیک حلقهٔ خودکار ۲۴/۷ (پر نگه‌داشتن صف + گزارش تلگرام)
+ *
+ * ⚠️ تفاوت `full` و `loop`:
+ *   `full` چرخهٔ قدیمی است (موتورها + صف + یادآوری + انقضا + پاک‌سازی).
+ *   `loop` همان چرخه را به‌علاوهٔ «مأموریت‌سازی خودکار و جایگزینی پویا»
+ *   اجرا می‌کند و برای فاصله‌های زیر ۱۰ دقیقه طراحی شده است.
  */
 
 function authorized(req: NextRequest) {
@@ -75,6 +82,7 @@ async function run(req: NextRequest, jobParam: string) {
     "expire",
     "reports",
     "cleanup",
+    "loop",
   ].includes(jobParam)
     ? jobParam
     : "full";
@@ -88,6 +96,45 @@ async function run(req: NextRequest, jobParam: string) {
   let status = "ok";
 
   try {
+    // شاخهٔ حلقهٔ خودکار ۲۴/۷ — کامل و مستقل (موتورها + مأموریت‌سازی + گزارش)
+    if (job === "loop") {
+      const loop = await runAutonomousLoop({ source: "cron" });
+      steps.loop = {
+        ok: loop.ok,
+        skipped: loop.skipped,
+        durationMs: loop.durationMs,
+        engines: loop.engines,
+        cardsCreated: loop.missions.created,
+        pendingBefore: loop.queueBefore.pendingTotal,
+        pendingAfter: loop.queueAfter.pendingTotal,
+        target: loop.state.targetPendingTotal,
+        decidedSinceLastTick: loop.decisions,
+        digest: loop.digest,
+      };
+      if (!loop.ok || loop.engines.error) status = "partial";
+
+      const durationLoop = Date.now() - started;
+      await db
+        .update(cronRuns)
+        .set({
+          status,
+          detail: JSON.stringify(steps).slice(0, 4000),
+          durationMs: durationLoop,
+          finishedAt: new Date(),
+        })
+        .where(eq(cronRuns.id, runRow.id));
+
+      return NextResponse.json({
+        ok: loop.ok,
+        job,
+        status,
+        durationMs: durationLoop,
+        steps,
+        loop,
+        runId: runRow.id,
+      });
+    }
+
     if (job === "market" || job === "full") {
       const r = await refreshMarket();
       steps.market = r.ok

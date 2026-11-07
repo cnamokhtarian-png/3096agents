@@ -69,6 +69,7 @@ export default function Control() {
   const [walletInfo, setWalletInfo] = useState<any>(null);
   const [stats, setStats] = useState<any>(null);
   const [cooData, setCooData] = useState<any>(null);
+  const [loopData, setLoopData] = useState<any>(null);
   const [logFilter, setLogFilter] = useState<"all" | "success" | "pending" | "error">("all");
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState("");
@@ -151,6 +152,10 @@ export default function Control() {
       fetch("/api/jobs").then((r) => r.json()).catch(() => []),
       fetch("/api/coo").then((r) => r.json()).catch(() => null),
     ]);
+    fetch("/api/loop")
+      .then((r) => r.json())
+      .then((d) => d?.ok && setLoopData(d))
+      .catch(() => {});
     fetch("/api/exchange")
       .then((r) => r.json())
       .then((d) => d?.ok && setExInfo(d))
@@ -193,6 +198,10 @@ export default function Control() {
           fetch("/api/rest?type=activity")
             .then((r) => r.json())
             .then((x) => Array.isArray(x) && setActivity(x))
+            .catch(() => {});
+          fetch("/api/loop")
+            .then((r) => r.json())
+            .then((d) => d?.ok && setLoopData(d))
             .catch(() => {});
         }, 10000);
       })
@@ -518,6 +527,44 @@ export default function Control() {
     }
   }
 
+  /** اجرای فوری یک تیک حلقهٔ خودکار ۲۴/۷ */
+  async function runLoopTick() {
+    setBusy("loop-tick");
+    try {
+      const d = await api("/api/loop", "POST", { source: "panel", forceDigest: false });
+      const created = d?.missions?.created ?? 0;
+      notify(
+        created > 0
+          ? `تیک حلقه اجرا شد — ${created} مأموریت تازه ساخته شد ♾️`
+          : `تیک اجرا شد؛ صف در هدف است (${d?.queueAfter?.pendingTotal ?? "?"} کارت). ${
+              d?.missions?.poolExhausted ? "همهٔ جایگاه‌ها پر بودند." : ""
+            }`
+      );
+      const fresh = await fetch("/api/loop").then((r) => r.json()).catch(() => null);
+      if (fresh?.ok) setLoopData(fresh);
+      await load();
+    } catch (e: any) {
+      notify(`⚠️ ${e.message}`);
+    } finally {
+      setBusy("");
+    }
+  }
+
+  /** تغییر تنظیمات حلقه (فعال/غیرفعال، فاصله، هدف صف) */
+  async function patchLoop(patch: Record<string, any>, message: string) {
+    setBusy("loop-config");
+    try {
+      const d = await api("/api/loop", "PATCH", patch);
+      if (d?.ok) notify(message);
+      const fresh = await fetch("/api/loop").then((r) => r.json()).catch(() => null);
+      if (fresh?.ok) setLoopData(fresh);
+    } catch (e: any) {
+      notify(`⚠️ ${e.message}`);
+    } finally {
+      setBusy("");
+    }
+  }
+
   async function runCooCommand(action: "startup_directive" | "run_cycle" | "executive_report") {
     setBusy(`coo-${action}`);
     try {
@@ -555,6 +602,7 @@ export default function Control() {
 
   const nav: [string, string][] = [
     ["hq", "🏢 ساختمان مرکزی"],
+    ["loop", "♾️ حلقه ۲۴/۷"],
     ["agents", "👥 کارمندان و دفاتر"],
     ["projects", "💼 پروژه‌ها"],
     ["chats", "💬 گفتگوها"],
@@ -1423,6 +1471,230 @@ export default function Control() {
             </section>
           )}
 
+          {/* ═══════════════ حلقهٔ خودکار ۲۴/۷ ═══════════════ */}
+          {view === "loop" && (
+            <section className="mt-4 space-y-4">
+              <div className="relative overflow-hidden rounded-3xl bg-gradient-to-l from-[#0B1220] via-[#101d31] to-[#081120] p-5 text-white md:p-6">
+                <div className="pointer-events-none absolute -left-20 -top-20 h-52 w-52 rounded-full bg-emerald-500/20 blur-3xl" />
+                <div className="relative flex flex-wrap items-start justify-between gap-4">
+                  <div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="rounded-full bg-emerald-500 px-3 py-1 text-[10px] font-black text-black">
+                        ♾️ حلقهٔ خودکار ۲۴/۷
+                      </span>
+                      <span
+                        className={`rounded-full px-3 py-1 text-[10px] font-black ${
+                          loopData?.loop?.enabled
+                            ? "bg-emerald-500/20 text-emerald-300"
+                            : "bg-red-500/20 text-red-300"
+                        }`}
+                      >
+                        {loopData?.loop?.enabled ? "فعال — در حال تیک‌زدن" : "متوقف"}
+                      </span>
+                      <span className="rounded-full border border-white/15 bg-white/5 px-2.5 py-1 text-[10px]">
+                        فاصله: {fa(loopData?.loop?.intervalMinutes ?? 15)} دقیقه
+                      </span>
+                    </div>
+                    <h2 className="mt-3 text-xl font-black md:text-2xl">هیچ کارمندی بیکار نمی‌ماند</h2>
+                    <p className="mt-2 max-w-2xl text-[11px] leading-6 text-slate-300">
+                      هر تیک، موتورهای زنده (آریا، بانتی‌هانتر، متخصص‌ها) را اجرا می‌کند، صف تأیید را تا هدف
+                      مشخص پر نگه می‌دارد و به‌محض تأیید یا رد یک کارت، بلافاصله مأموریت تازهٔ همان کارمند را
+                      می‌سازد. همهٔ کارت‌ها همچنان با دکمهٔ [✅]/[❌] شما نهایی می‌شوند — قفل مالی HITL دست‌نخورده است.
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      onClick={runLoopTick}
+                      disabled={busy === "loop-tick"}
+                      className="rounded-xl bg-emerald-500 px-4 py-2.5 text-xs font-black text-black transition hover:bg-emerald-400 disabled:opacity-50"
+                    >
+                      {busy === "loop-tick" ? "⏳ در حال اجرا…" : "▶️ اجرای یک تیک کامل"}
+                    </button>
+                    <button
+                      onClick={() =>
+                        patchLoop(
+                          { enabled: !loopData?.loop?.enabled },
+                          loopData?.loop?.enabled ? "حلقه متوقف شد ⏸" : "حلقه فعال شد ▶️"
+                        )
+                      }
+                      disabled={busy === "loop-config"}
+                      className="rounded-xl border border-white/20 bg-white/5 px-4 py-2.5 text-xs font-bold text-white transition hover:bg-white/10 disabled:opacity-50"
+                    >
+                      {loopData?.loop?.enabled ? "⏸ توقف حلقه" : "▶️ فعال‌سازی حلقه"}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="relative mt-4 grid grid-cols-2 gap-2 text-center md:grid-cols-5">
+                  {[
+                    ["صف تأیید", `${fa(loopData?.queue?.pendingTotal ?? 0)} / ${fa(loopData?.queue?.targetPendingTotal ?? 8)}`, "کارت"],
+                    ["مأموریت ساخته‌شده", fa(loopData?.loop?.totals?.cardsCreated ?? 0), "کل"],
+                    ["تأیید شما", fa(loopData?.loop?.totals?.cardsApproved ?? 0), "کارت"],
+                    ["رد شما", fa(loopData?.loop?.totals?.cardsRejected ?? 0), "کارت"],
+                    ["تیک‌های اجراشده", fa(loopData?.loop?.totals?.ticks ?? 0), "تیک"],
+                  ].map(([l, v, u]) => (
+                    <div key={l} className="rounded-2xl border border-white/10 bg-white/5 px-3 py-2">
+                      <p className="text-[9px] text-slate-400">{l}</p>
+                      <p className="mt-0.5 text-base font-black text-emerald-300">
+                        {v}
+                        <span className="mr-1 text-[8px] font-normal text-slate-400">{u}</span>
+                      </p>
+                    </div>
+                  ))}
+                </div>
+
+                <p className="relative mt-3 text-[10px] text-slate-400">
+                  آخرین تیک: {loopData?.loop?.lastTickAt ? dt(loopData.loop.lastTickAt) : "هنوز اجرا نشده"} • منبع:{" "}
+                  {loopData?.loop?.lastTickSource || "—"} • تیک بعدی (تقریبی):{" "}
+                  {loopData?.loop?.nextTickAt ? dt(loopData.loop.nextTickAt) : "—"} • گزارش تلگرام:{" "}
+                  {loopData?.loop?.digestEnabled
+                    ? `حداکثر هر ${fa(loopData?.loop?.digestMinMinutes ?? 45)} دقیقه`
+                    : "خاموش"}
+                </p>
+              </div>
+
+              {/* تنظیمات حلقه */}
+              <div className="rounded-3xl border bg-white p-5">
+                <h3 className="font-black">⚙️ تنظیمات چرخه</h3>
+                <p className="mt-1 text-[11px] text-slate-500">
+                  این مقادیر در جدول <code className="font-mono">settings</code> ذخیره می‌شوند و روی تیک بعدی اثر
+                  می‌گذارند. تغییر فاصله را از دستور <code className="font-mono">/loop 10</code> در تلگرام هم می‌توانید بدهید.
+                </p>
+                <div className="mt-3 grid gap-3 md:grid-cols-3">
+                  <label className="rounded-2xl border p-3">
+                    <span className="text-[10px] font-bold text-slate-600">فاصلهٔ تیک (دقیقه)</span>
+                    <select
+                      value={loopData?.loop?.intervalMinutes ?? 15}
+                      onChange={(e) => patchLoop({ intervalMinutes: Number(e.target.value) }, `فاصله روی ${e.target.value} دقیقه تنظیم شد ⏱`)}
+                      className="mt-1 w-full rounded-xl border p-2 text-sm"
+                    >
+                      {[5, 10, 15, 30, 60, 120].map((m) => (
+                        <option key={m} value={m}>{m} دقیقه</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="rounded-2xl border p-3">
+                    <span className="text-[10px] font-bold text-slate-600">هدف کل کارت‌های منتظر تأیید</span>
+                    <select
+                      value={loopData?.loop?.targetPendingTotal ?? 8}
+                      onChange={(e) => patchLoop({ targetPendingTotal: Number(e.target.value) }, `هدف صف روی ${e.target.value} کارت تنظیم شد 📥`)}
+                      className="mt-1 w-full rounded-xl border p-2 text-sm"
+                    >
+                      {[2, 4, 6, 8, 12, 16].map((n) => (
+                        <option key={n} value={n}>{n} کارت</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="rounded-2xl border p-3">
+                    <span className="text-[10px] font-bold text-slate-600">سقف کارت هر کارمند</span>
+                    <select
+                      value={loopData?.loop?.maxPendingPerAgent ?? 2}
+                      onChange={(e) => patchLoop({ maxPendingPerAgent: Number(e.target.value) }, `سقف هر کارمند روی ${e.target.value} تنظیم شد`)}
+                      className="mt-1 w-full rounded-xl border p-2 text-sm"
+                    >
+                      {[1, 2, 3, 4].map((n) => (
+                        <option key={n} value={n}>{n} کارت</option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <button
+                    onClick={() =>
+                      patchLoop(
+                        { runEnginesEveryTick: !loopData?.loop?.runEnginesEveryTick },
+                        loopData?.loop?.runEnginesEveryTick
+                          ? "اجرای موتورها در هر تیک خاموش شد (سبک‌تر)"
+                          : "اجرای موتورها در هر تیک روشن شد 📡"
+                      )
+                    }
+                    className={`rounded-full border px-3 py-1.5 text-[11px] font-bold ${
+                      loopData?.loop?.runEnginesEveryTick
+                        ? "border-emerald-300 bg-emerald-50 text-emerald-700"
+                        : "border-slate-300 bg-white text-slate-600"
+                    }`}
+                  >
+                    📡 موتورها در هر تیک: {loopData?.loop?.runEnginesEveryTick ? "روشن" : "خاموش"}
+                  </button>
+                  <button
+                    onClick={() =>
+                      patchLoop(
+                        { digestEnabled: !loopData?.loop?.digestEnabled },
+                        loopData?.loop?.digestEnabled ? "گزارش تلگرام خاموش شد" : "گزارش تلگرام روشن شد 📨"
+                      )
+                    }
+                    className={`rounded-full border px-3 py-1.5 text-[11px] font-bold ${
+                      loopData?.loop?.digestEnabled
+                        ? "border-emerald-300 bg-emerald-50 text-emerald-700"
+                        : "border-slate-300 bg-white text-slate-600"
+                    }`}
+                  >
+                    📨 گزارش خلاصه در تلگرام: {loopData?.loop?.digestEnabled ? "روشن" : "خاموش"}
+                  </button>
+                  <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-[11px] text-slate-600">
+                    ♻️ خنک‌شدن تکرار قالب مأموریت: {fa(loopData?.loop?.cooldownHours ?? 6)} ساعت
+                  </span>
+                </div>
+              </div>
+
+              {/* صف هر کارمند */}
+              <div className="rounded-3xl border bg-white p-5">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <h3 className="font-black">📥 جایگاه هر کارمند در صف تأیید</h3>
+                  <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[10px] font-bold text-slate-600">
+                    {fa((loopData?.queue?.byAgent || []).filter((a: any) => a.needsCard).length)} جایگاه خالی
+                  </span>
+                </div>
+                <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+                  {(loopData?.queue?.byAgent || []).map((a: any) => (
+                    <div
+                      key={a.id}
+                      className={`rounded-2xl border p-3 ${
+                        a.needsCard ? "border-amber-300 bg-amber-50/60" : "border-emerald-200 bg-emerald-50/40"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <b className="text-xs text-slate-800">{a.name}</b>
+                        <span
+                          className={`rounded-full px-2 py-0.5 text-[9px] font-black ${
+                            a.needsCard ? "bg-amber-200 text-amber-900" : "bg-emerald-200 text-emerald-900"
+                          }`}
+                        >
+                          {a.needsCard ? "🟡 جایگاه خالی" : "🟢 پر"}
+                        </span>
+                      </div>
+                      <p className="mt-1 text-[10px] text-slate-500">
+                        {fa(a.pending)} کارت منتظر تأیید • آخرین فعالیت: {a.lastActivityAt ? relativeTime(a.lastActivityAt) : "بدون فعالیت"}
+                      </p>
+                    </div>
+                  ))}
+                  {!(loopData?.queue?.byAgent || []).length && (
+                    <p className="col-span-full rounded-2xl bg-slate-50 p-6 text-center text-xs text-slate-400">
+                      هنوز داده‌ای از صف نیست؛ یک تیک اجرا کنید.
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              {/* راهنمای تلگرام */}
+              <div className="rounded-3xl border border-slate-200 bg-white p-5 text-[11px] leading-6 text-slate-600">
+                <b className="text-slate-900">📩 کنترل حلقه از تلگرام:</b>
+                <ul className="mt-2 space-y-1">
+                  <li>• <code className="font-mono">/loop</code> — وضعیت حلقه، صف، و تیک بعدی</li>
+                  <li>• <code className="font-mono">/tick</code> — اجرای فوری یک تیک کامل (ساخت مأموریت تازه + گزارش)</li>
+                  <li>• <code className="font-mono">/loop on</code> / <code className="font-mono">/loop off</code> — روشن/خاموش کردن حلقه</li>
+                  <li>• <code className="font-mono">/loop 10</code> — تغییر فاصله به ۱۰ دقیقه</li>
+                  <li>• <code className="font-mono">/queue</code> — صف تأیید به تفکیک هر کارمند</li>
+                </ul>
+                <p className="mt-2 rounded-xl bg-slate-50 p-2.5 text-[10px] text-slate-500">
+                  نکتهٔ فنی: فاصلهٔ واقعی تیک با زمان‌بند GitHub Actions
+                  (<code className="font-mono">.github/workflows/fleet-loop.yml</code>) تعیین می‌شود؛ این مقدار
+                  «فاصلهٔ ثبت‌شده در دیتابیس» است که پنل و تلگرام برای شمارش تیک بعدی و هدف صف استفاده می‌کنند.
+                </p>
+              </div>
+            </section>
+          )}
+
           {/* ═══════════════ صف تأیید ═══════════════ */}
           {view === "approvals" && (
             <section className="mt-4 space-y-3">
@@ -1516,7 +1788,8 @@ export default function Control() {
                   ))}
                   {jobs.length === 0 && (
                     <p className="rounded-2xl bg-slate-50 p-6 text-center text-xs text-slate-400">
-                      صف کار خالی است. از دفتر کارمند یک مأموریت بسازید.
+                      صف کار خالی است. حلقهٔ خودکار ۲۴/۷ در تیک بعدی، مأموریت تازه می‌سازد — یا همین حالا از بخش
+                      «♾️ حلقه ۲۴/۷» دکمهٔ «اجرای یک تیک» را بزنید.
                     </p>
                   )}
                 </ul>
