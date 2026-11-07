@@ -1,0 +1,66 @@
+# حلقهٔ زندهٔ ناوگان (Fleet Loop) — اجرای چرخهٔ واقعی پس‌زمینه هر ۳۰ دقیقه.
+#
+# چرا GitHub Actions؟ پلن Hobby ورسل اجازهٔ کرون بیش از روزی یک‌بار نمی‌دهد،
+# پس کرون روزانهٔ vercel.json فقط «ضربان پشتیبان» است و حلقهٔ اصلی اینجاست:
+# اسکن واقعی بازار (آریا)، اسکن بانتی، پایش متخصص‌ها، اجرای صف، یادآوری و
+# انقضای تأییدها — دقیقاً همان job=full که کرون ورسل صدا می‌زند.
+#
+# پیش‌نیاز (یک‌بار): در GitHub → Settings → Secrets and variables → Actions
+# یک سکرت به نام CRON_SECRET بسازید با همان مقداری که در Vercel با نام
+# CRON_SECRET ذخیره شده است. بدون آن، این حلقه 401 می‌گیرد و هیچ کاری نمی‌کند.
+# اجرای دستی هم از تب Actions → Fleet Loop → Run workflow ممکن است.
+
+name: Fleet Loop (چرخه زنده ناوگان)
+
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+    inputs:
+      job:
+        description: "نوع چرخه (full = چرخه کامل ناوگان)"
+        required: false
+        default: "full"
+        type: choice
+        options:
+          - full
+          - fleet
+          - market
+          - queue
+
+permissions: {}
+
+concurrency:
+  group: fleet-loop
+  cancel-in-progress: false
+
+jobs:
+  tick:
+    name: اجرای چرخهٔ ناوگان روی Production
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: تحریک چرخهٔ واقعی ناوگان
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          APP_URL: https://freelance-agent-os.vercel.app
+          JOB: ${{ inputs.job || 'full' }}
+        run: |
+          if [ -z "$CRON_SECRET" ]; then
+            echo "::error::سکرت CRON_SECRET در GitHub Secrets تنظیم نشده است؛ حلقهٔ ناوگان غیرفعال می‌ماند. راهنما: بالای همین فایل."
+            exit 1
+          fi
+          echo "Triggering fleet cycle (job=$JOB) on $APP_URL ..."
+          HTTP_CODE=$(curl -sS -m 240 -o /tmp/fleet-resp.json -w "%{http_code}" \
+            -X POST "$APP_URL/api/cron/tick" \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            -H "Content-Type: application/json" \
+            -d "{\"job\":\"$JOB\"}")
+          echo "HTTP $HTTP_CODE"
+          cat /tmp/fleet-resp.json
+          echo
+          if [ "$HTTP_CODE" != "200" ] || ! grep -q '"ok":true' /tmp/fleet-resp.json; then
+            echo "::error::چرخهٔ ناوگان موفق نبود (HTTP $HTTP_CODE)."
+            exit 1
+          fi
+          echo "Fleet cycle completed successfully."

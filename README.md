@@ -156,6 +156,20 @@ Telegram (دکمه تأیید) ──► /api/telegram/webhook ──► approve
 اگر پلن Pro دارید و اسکن هر ۱۰ دقیقه می‌خواهید، `schedule` را به `*/10 * * * *` تغییر دهید. جایگزین روی Hobby: یک سرویس Ping (مثل cron-job.org) با آدرس
 `/api/cron/tick?job=full&secret=CRON_SECRET` و متد GET.
 
+**حلقهٔ زندهٔ ناوگان (فعال):** فایل `.github/workflows/fleet-loop.yml` هر ۳۰ دقیقه
+`job=full` را روی Production اجرا می‌کند (اسکن واقعی بازار آریا، اسکن بانتی، پایش
+متخصص‌ها، اجرای صف، یادآوری/انقضای تأییدها). پیش‌نیاز یک‌باره: در
+GitHub → Settings → Secrets and variables → Actions سکرتی به نام `CRON_SECRET`
+با همان مقدار متغیر `CRON_SECRET` در Vercel بسازید؛ بدون آن حلقه 401 می‌گیرد.
+اجرای دستی: تب Actions → «Fleet Loop» → ‏Run workflow. کرون روزانهٔ Vercel
+نقش ضربان پشتیبان را دارد.
+
+**وضعیت قفل معامله:** اجرای واقعی سفارش‌ها (`AGENT_TRADING_ENABLED`) از پنل
+(جدول `settings`) یا Env روشن می‌شود؛ با صرافی ذخیره‌شدهٔ Tabdeal
+(بدون Testnet) روشن‌کردن قفل یعنی سفارش‌ها روی Mainnet می‌روند و همچنان فقط
+با کلیک [✅] مدیرعامل در تلگرام ارسال می‌شوند. باندل کامل ذخیره‌شده در پنل
+(نام صرافی + کلید + سکرت) بر کلیدهای Env اولویت دارد.
+
 ### گام ۴ — اتصال تلگرام
 1. توکن ربات را از @BotFather بگیرید و `TELEGRAM_BOT_TOKEN` را ست کنید.
 2. چت‌آیدی خود را با `/id` در ربات بگیرید و در `TELEGRAM_ADMIN_CHAT_ID` بگذارید.
