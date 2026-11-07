@@ -19,12 +19,25 @@ export type VerifiedBounty = {
   estimatedProfitUsdt: number;
   estimatedDuration: string;
   analysisReason: string;
+  /** دارایی پاداش: BTC / USDT / ETH / … (خالی = نامشخص) */
+  cryptoAsset?: string;
+  /** آیا بدون سرمایه اولیه قابل انجام است؟ */
+  freeToClaim?: boolean;
+  /** مسیر دریافت و برداشت جایزه (شفافیت شرط برداشت) */
+  claimPath?: string;
+  /** دلیل رد شدن (برای شفافیت در لاگ و پنل) */
+  rejection?: string;
 };
 
+/**
+ * 🔎 منابع پیش‌فرض B7 — فقط منابع تخصصی ایردراپ/پاداش رمزارزی.
+ * خبرهای عمومی رمزارز (decrypt/cointelegraph) عمداً حذف شدند چون هدف B7
+ * «شکار جایزه رایگان» است، نه خواندن اخبار.
+ * این فهرست فقط زمانی استفاده می‌شود که تنظیم `bounty_sources` در دیتابیس خالی باشد.
+ */
 const DEFAULT_SOURCES = [
   "https://airdrops.io/feed/",
-  "https://decrypt.co/feed",
-  "https://cointelegraph.com/rss",
+  "https://airdropalert.com/feed/",
 ];
 
 function stripTags(html: string): string {
@@ -61,13 +74,69 @@ export function parseRssFeed(xml: string): RawFeedItem[] {
   return out;
 }
 
-/** حقیقت‌سنجی قطعی ضداسکم (Deterministic Security Gate) */
-function evaluateItemDeterministically(item: RawFeedItem): VerifiedBounty {
-  const hay = `${item.title} ${item.description}`.toLowerCase();
+/**
+ * 🛡️ حقیقت‌سنجی قطعی ضداسکم + فیلتر «پاداش رایگان رمزارزی» (Deterministic Gate)
+ *
+ * پروتکل جدید B7 (دستور مدیرعامل، ۱۴۰۵/۰۸/۱۶):
+ *  فاز ۱ — دروازه امنیتی: فیشینگ/کلید خصوصی/واریز اجباری → رد قطعی
+ *  فاز ۲ — ربط رمزارزی: باید دارایی پاداش رمزارزی معتبر باشد
+ *  فاز ۳ — رایگان‌بودن: نباید سرمایه‌گذاری اولیه لازم باشد
+ *  فاز ۴ — شفافیت برداشت: مسیر دریافت/برداشت باید قابل توضیح باشد
+ */
 
+/** دارایی‌های مجاز: بیت‌کوین، تتر و رمزارزهای معتبر دیگر. */
+const QUALIFIED_ASSETS: Array<{ re: RegExp; label: string }> = [
+  { re: /bitcoin|\bbtc\b|satoshi|\bsats\b/i, label: "BTC" },
+  { re: /tether|\busdt\b|\busdc\b/i, label: "USDT/USDC" },
+  { re: /ethereum|\beth\b|\bwei\b/i, label: "ETH" },
+  { re: /solana|\bsol\b/i, label: "SOL" },
+  { re: /\bbnb\b|binance coin/i, label: "BNB" },
+  { re: /\bton\b|toncoin|the open network/i, label: "TON" },
+  { re: /\bxrp\b|ripple/i, label: "XRP" },
+];
+
+/** کلیدواژه‌های «پاداش رایگان» (بدون سرمایه اولیه). */
+const FREE_REWARD_SIGNALS =
+  /free (crypto|bitcoin|btc|airdrop|reward|tokens?|usdt)|no (deposit|investment|purchase) (required|needed)|0\$|zero cost|without (any )?(deposit|investment)|claim free|free to (join|participate|claim)|faucet|faucets|free spins?|learn.{0,20}earn|watch.{0,15}earn|sign[- ]?up (bonus|reward|airdrop)|signup bonus|referral (bonus|reward)|points program|campaign points|reward program|testnet reward|quest(s)? (reward|points)|daily (check[- ]?in|streak)|free airdrop/i;
+
+/** نشانه‌های سرمایه‌گذاری اولیه / پرداخت برای دریافت جایزه. */
+const PAID_SIGNALS =
+  /(deposit|invest|buy|purchase|pay)\s+(at least|minimum|min\.?)\s*\$?\d|minimum (deposit|investment|purchase)|requires? (a )?(deposit|payment|purchase|investment)|paid (entry|tier)|pre-?sale|presale|ico\b|ido\b|token sale|staking (to )?(earn|receive)|locked liquidity|buy .{0,12}to (participate|claim|receive)|subscription (fee|required)/i;
+
+/** نشانه‌های محتوای آموزشی/خبری که کمپین مستقیم نیست. */
+const GUIDE_SIGNALS =
+  /explained|what is |how to |guide|tutorial|review|top \d+|best \d+|biggest|list of|opinion|analysis|price prediction|week in review/i;
+
+/** مسیر دریافت جایزه بر اساس نوع کمپین (برای شفافیت شرط برداشت). */
+function detectClaimPath(hay: string, link: string): string {
+  if (/node|validator|miner/i.test(hay))
+    return "نصب نود/کلاینت رسمی → اتصال کیف پول شخصی → شرط تسک‌های داشبورد → برداشت توکن در TGE (فقط کارمزد شبکه)";
+  if (/quest|galxe|zealy|layer3|task/i.test(hay))
+    return "اتصال کیف پول شخصی در داشبورد کمپین → انجام تسک‌ها → اسنپ‌شات امتیاز → کلایم رسمی در سایت پروژه";
+  if (/faucet/i.test(hay))
+    return "ثبت‌نام یا ورود با کیف پول → درخواست دوره‌ای از فاست → برداشت مستقیم به کیف پول شخصی";
+  if (/sign[- ]?up|signup|register/i.test(hay))
+    return "ثبت‌نام رایگان → انجام شرط (ورود روزانه/تسک) → کلایم در حساب کاربری → برداشت به کیف پول شخصی";
+  if (/airdrop|points/i.test(hay))
+    return "ثبت‌نام رایگان در کمپین → شرکت در تسک‌ها → کلایم در اسنپ‌شات اعلامی پروژه → برداشت به کیف پول شخصی";
+  return `شرایط برداشت باید روی صفحه رسمی کمپین بررسی شود — ${link}`;
+}
+
+function detectAsset(hay: string): string | null {
+  for (const a of QUALIFIED_ASSETS) if (a.re.test(hay)) return a.label;
+  // کمپین‌های ایردراپ توکنی که دارایی نهایی آن اعلام نشده، «رمزارز» هستند ولی نامشخص
+  if (/airdrop|token|crypto|web3|blockchain|defi/i.test(hay)) return "رمزارز (نامشخص)";
+  return null;
+}
+
+function evaluateItemDeterministically(item: RawFeedItem): VerifiedBounty {
+  const hay = `${item.title} ${item.description}`;
+  const claimPath = detectClaimPath(hay, item.link);
+
+  // ── فاز ۱: دروازه امنیتی ────────────────────────────────────────────────
   if (
     !/^https:\/\//i.test(item.link) ||
-    /seed phrase|private key|recovery phrase|send .* eth to receive|send .* usdt to unlock|double your crypto/i.test(
+    /seed phrase|private key|recovery phrase|send .* eth to receive|send .* usdt to unlock|double your crypto|connect wallet and sign|airdrop checker|claim now before it'?s (too )?late|urgent: ?verify/i.test(
       hay,
     )
   ) {
@@ -81,10 +150,11 @@ function evaluateItemDeterministically(item: RawFeedItem): VerifiedBounty {
       estimatedDuration: "—",
       analysisReason:
         "رد خودکار توسط موتور ضداسکم: وجود کلیدواژه خطرناک یا لینک غیرامن.",
+      rejection: "security_gate",
     };
   }
 
-  if (/guaranteed 100x|instant free money|no task百万/i.test(hay)) {
+  if (/guaranteed 100x|instant free money|no task|risk[- ]?free profit|send funds/i.test(hay)) {
     return {
       title: item.title,
       link: item.link,
@@ -94,12 +164,47 @@ function evaluateItemDeterministically(item: RawFeedItem): VerifiedBounty {
       estimatedProfitUsdt: 0,
       estimatedDuration: "—",
       analysisReason: "وعده بازده غیرواقعی؛ امتیاز اعتماد زیر حد نصاب ایمنی شرکت.",
+      rejection: "unrealistic_promise",
     };
   }
 
-  const isGuideOrListicle =
-    /explained|biggest airdrops ever|what is a crypto airdrop/i.test(item.title);
-  if (isGuideOrListicle) {
+  // ── فاز ۲: رایگان بودن (بدون سرمایه اولیه) ───────────────────────────────
+  const isFree = FREE_REWARD_SIGNALS.test(hay);
+  const isPaid = PAID_SIGNALS.test(hay);
+  if (isPaid && !isFree) {
+    return {
+      title: item.title,
+      link: item.link,
+      verdict: "suspicious",
+      trustScore: 30,
+      rewardLabel: "رد شده — نیازمند سرمایه‌گذاری اولیه",
+      estimatedProfitUsdt: 0,
+      estimatedDuration: "—",
+      analysisReason:
+        "طبق پروتکل B7 فقط کمپین‌های رایگان (بدون واریز/خرید) پذیرفته می‌شوند؛ این مورد پرداخت اولیه می‌خواهد.",
+      rejection: "requires_investment",
+    };
+  }
+
+  // ── فاز ۳: ربط رمزارزی ────────────────────────────────────────────────
+  const asset = detectAsset(hay);
+  if (!asset) {
+    return {
+      title: item.title,
+      link: item.link,
+      verdict: "suspicious",
+      trustScore: 30,
+      rewardLabel: "رد شده — پاداش رمزارزی نیست",
+      estimatedProfitUsdt: 0,
+      estimatedDuration: "—",
+      analysisReason:
+        "پاداش این مورد رمزارزی (BTC/USDT یا رمزارز معتبر) نیست؛ طبق دستور مدیرعامل کنار گذاشته شد.",
+      rejection: "not_crypto_reward",
+    };
+  }
+
+  // ── فاز ۴: محتوای آموزشی/خبری (کمپین مستقیم نیست) ─────────────────────
+  if (GUIDE_SIGNALS.test(item.title) && !isFree) {
     return {
       title: item.title,
       link: item.link,
@@ -108,27 +213,30 @@ function evaluateItemDeterministically(item: RawFeedItem): VerifiedBounty {
       rewardLabel: "مقاله آموزشی (کمپین مستقیم نیست)",
       estimatedProfitUsdt: 0,
       estimatedDuration: "۱۵ دقیقه مطالعه",
-      analysisReason: "محتوای آموزشی عمومی است و کمپین پاداش مستقیم قابل مطالبه ندارد.",
+      analysisReason:
+        "محتوای آموزشی/خبری است و کمپین پاداش مستقیم قابل مطالبه ندارد.",
+      rejection: "editorial_content",
+      cryptoAsset: asset,
     };
   }
 
-  let score = 74;
-  const signals: string[] = ["دامنه معتبر HTTPS بدون درخواست کلید خصوصی یا واریز اجباری"];
-
+  // ── قبول: کمپین رایگان رمزارزی ─────────────────────────────────────────
+  let score = isFree ? 78 : 68;
+  const signals: string[] = [`پاداش رمزارزی: ${asset}`];
+  if (isFree) signals.push("بدون سرمایه‌گذاری اولیه (رایگان)");
   if (/testnet|node|points|quest|mainnet|season|incentivized|galxe|zealy|layer/i.test(hay)) {
-    score += 10;
+    score += 8;
     signals.push("کمپین امتیازدهی/تست‌نت رسمی پروتکل");
   }
-  if (/airdrops\.io/i.test(item.link)) {
+  if (/airdrops\.io|airdropalert/i.test(item.link)) {
     score += 4;
-    signals.push("فهرست‌شده در مرجع پایش ایردراپ (airdrops.io)");
+    signals.push("فهرست‌شده در مرجع پایش ایردراپ");
   }
 
-  // استخراج مبلغ دلاری در صورت ذکر صریح در متن؛ در غیر این صورت تخمین محافظه‌کارانه پاداش تسک
   const usdMatch = hay.match(/\$\s*(\d{2,4})\b/);
   const estUsdt = usdMatch
     ? Math.min(250, Math.max(15, Number(usdMatch[1])))
-    : /node|farm|perp|dex/i.test(hay)
+    : /node|farm|perp|dex|airdrop/i.test(hay)
     ? 45
     : 25;
 
@@ -142,11 +250,14 @@ function evaluateItemDeterministically(item: RawFeedItem): VerifiedBounty {
     verdict: "ok",
     trustScore: Math.min(95, score),
     rewardLabel: usdMatch
-      ? `پاداش تخمینی ~${estUsdt} USDT (بر اساس کمپین اعلامی)`
-      : `امتیاز ایردراپ / پاداش تخمینی ~${estUsdt} USDT`,
+      ? `پاداش رایگان تخمینی ~${estUsdt} USDT (${asset})`
+      : `پاداش رایگان ایردراپ (${asset}) — تخمین ~${estUsdt} USDT`,
     estimatedProfitUsdt: estUsdt,
     estimatedDuration: estDuration,
     analysisReason: signals.join(" + "),
+    cryptoAsset: asset,
+    freeToClaim: true,
+    claimPath,
   };
 }
 
@@ -254,11 +365,15 @@ export async function scanBountyFeeds(opts: {
   if (nonScam.length > 0) {
     const ai = await generateGeminiText(
       [
-        "تو تحلیلگر ضداسکم کمپین‌های Web3 هستی. برای هر مورد زیر یک شیء JSON در آرایه خروجی بده (فقط JSON خالص):",
-        ...nonScam.map((v, idx) => `${idx + 1}. ${v.title} (${v.link})`),
-        'فرمت: [{"score": عدد ۰ تا ۱۰۰, "verdict": "ok"|"suspicious"|"scam", "reason": "دلیل حقیقت‌سنجی فارسی حداکثر ۲۰ کلمه"}]',
+        "تو تحلیلگر ضداسکم کمپین‌های پاداش رایگان رمزارزی (ایردراپ/بانتی/BTC و USDT) هستی.",
+        "قانون شرکت: فقط پاداش رایگان رمزارزی معتبر قبول است؛ پاداش غیررمزارزی، فیشینگ، یا هر چیزی که واریز/خرید اولیه بخواهد باید رد شود.",
+        "برای هر مورد زیر یک شیء JSON در آرایه خروجی بده (فقط JSON خالص):",
+        ...nonScam.map(
+          (v, idx) => `${idx + 1}. ${v.title} (${v.link}) — دارایی: ${v.cryptoAsset || "نامشخص"}`,
+        ),
+        'فرمت: [{"score": 0-100, "verdict": "ok"|"suspicious"|"scam", "asset": "BTC|USDT|ETH|…", "free": true|false, "withdrawal": "شرط برداشت در حداکثر ۱۵ کلمه", "reason": "دلیل حقیقت‌سنجی فارسی حداکثر ۲۰ کلمه"}]',
       ].join("\n"),
-      { temperature: 0.1, maxOutputTokens: 600, timeoutMs: 12000 },
+      { temperature: 0.1, maxOutputTokens: 700, timeoutMs: 12000 },
     );
     if (ai.ok) {
       try {
@@ -279,6 +394,19 @@ export async function scanBountyFeeds(opts: {
           if (typeof item.reason === "string" && item.reason.trim()) {
             v.analysisReason = item.reason.trim().slice(0, 220);
           }
+          // پاداش غیررمزارزی یا پرداختی → کنار گذاشته می‌شود (پروتکل B7)
+          if (item.free === false) {
+            v.verdict = "suspicious";
+            v.trustScore = Math.min(v.trustScore, 40);
+            v.freeToClaim = false;
+            v.rejection = "requires_investment";
+          }
+          if (typeof item.asset === "string" && item.asset.trim()) {
+            v.cryptoAsset = item.asset.trim().slice(0, 24).toUpperCase();
+          }
+          if (typeof item.withdrawal === "string" && item.withdrawal.trim()) {
+            v.claimPath = item.withdrawal.trim().slice(0, 240);
+          }
         });
       } catch {
         // در صورت JSON غیراستاندارد، همان ارزیابی قطعی حفظ می‌شود
@@ -288,8 +416,13 @@ export async function scanBountyFeeds(opts: {
 
   // اطمینان از هم‌ترازی نمره و حکم
   void eq;
+  // فقط پاداش رایگان رمزارزی با حکم ok و امتیاز کافی عبور می‌کند
   const qualified = verified.filter(
-    (v) => v.verdict === "ok" && v.trustScore >= minScore,
+    (v) =>
+      v.verdict === "ok" &&
+      v.trustScore >= minScore &&
+      Boolean(v.cryptoAsset) &&
+      v.freeToClaim !== false,
   );
 
   return {

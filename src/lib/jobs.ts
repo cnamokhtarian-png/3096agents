@@ -846,43 +846,32 @@ export async function remindPendingApprovals(olderThanMinutes = 45, windowMinute
   return { sent, candidates: rows.length };
 }
 
-/** تولید گزارش روزانه‌ی همه‌ی کارمندان و ارسال به تلگرام (کرون). */
+/**
+ * گزارش دوره‌ای/روتین همه‌ی کارمندان.
+ *
+ * ⛔ سیاست مدیرعامل (۱۴۰۵/۰۸/۱۶): ارسال خودکار گزارش‌های دوره‌ای به تلگرام
+ * متوقف شده است. گزارش فقط زمانی ساخته و ارسال می‌شود که مدیرعامل شخصاً
+ * درخواست کند. برای همین این تابع (که تنها مصرف‌کننده‌اش کرون و پارامتر
+ * دستی «ارسال گزارش روزانه» در پنل/تلگرام بود) هیچ پیامی نمی‌فرستد و فقط
+ * وضعیت «غیرفعال» را برمی‌گرداند.
+ *
+ * گزارش دستی: POST /api/agents/[id]/report  (با useAi و sendToTelegram)
+ */
 export async function sendDailyReports() {
-  const all = await db.select().from(agents);
-  let sent = 0;
-  const errors: string[] = [];
-  for (const agent of all) {
-    if (agent.status !== "active") continue;
-    try {
-      const report = await generateAgentReport(agent.id, { useAi: true });
-      if (!report.ok) {
-        errors.push(`${agent.name}: ${report.error}`);
-        continue;
-      }
-      if (telegramConfigured() && ENV.telegramAdminChat()) {
-        const res = await notifyAdmin(
-          `<b>📊 گزارش روزانه ${escapeHtml(agent.name)}</b>\n\n${escapeHtml(report.text)}`
-        );
-        if (res.ok) sent++;
-        else errors.push(`${agent.name}: ${(res as any).description || (res as any).error}`);
-      }
-      await db.insert(agentJobs).values({
-        agentId: agent.id,
-        agentName: agent.name,
-        kind: "status_report",
-        title: "گزارش روزانه خودکار",
-        detail: "ساخته‌شده توسط Vercel Cron",
-        payload: {},
-        status: "succeeded",
-        requiresApproval: false,
-        result: { report: report.text, source: report.source },
-        finishedAt: new Date(),
-      });
-    } catch (e: any) {
-      errors.push(`${agent.name}: ${e?.message || e}`);
-    }
-  }
-  return { sent, agents: all.length, errors };
+  void agents;
+  void generateAgentReport;
+  void notifyAdmin;
+  void escapeHtml;
+  void telegramConfigured;
+  void ENV;
+  return {
+    sent: 0,
+    agents: 0,
+    disabled: true,
+    reason:
+      "ارسال خودکار گزارش‌های دوره‌ای به دستور مدیرعامل خاموش شده است؛ گزارش فقط با درخواست دستی شما تولید می‌شود.",
+    errors: [] as string[],
+  };
 }
 
 export async function expireStaleApprovals(olderThanHours = 72) {

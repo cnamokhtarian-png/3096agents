@@ -4,12 +4,7 @@ import { cronRuns, systemEvents, transactions } from "@/db/schema";
 import { eq, lt, and, sql } from "drizzle-orm";
 import { ENV } from "@/lib/env";
 import { refreshMarket } from "@/lib/market";
-import {
-  expireStaleApprovals,
-  remindPendingApprovals,
-  runQueuedJobs,
-  sendDailyReports,
-} from "@/lib/jobs";
+import { expireStaleApprovals, runQueuedJobs } from "@/lib/jobs";
 import { recordAgentError } from "@/lib/agent-execution";
 import { currentUser } from "@/lib/auth";
 import { generateCooExecutiveReport, runFleetCycle } from "@/lib/coo";
@@ -23,11 +18,18 @@ export const maxDuration = 60;
  *
  * کارها:
  *   market    → قیمت واقعی صرافی را در Supabase ذخیره می‌کند
+ *   fleet     → موتورهای ناوگان (آریا، B7 بانتی‌هانتر، متخصص‌ها)
  *   queue     → کارهای صف بدون نیاز به تأیید را اجرا می‌کند
- *   approvals → یادآوری درخواست‌های تأیید بی‌پاسخ در تلگرام
+ *   approvals → فقط شمارش درخواست‌های بی‌پاسخ (بدون ارسال پیام)
  *   expire    → منقضی کردن تأییدهای قدیمی
- *   reports   → گزارش روزانه هر کارمند را به تلگرام می‌فرستد
+ *   reports   → ⛔ خاموش به دستور مدیرعامل (فقط با درخواست دستی از پنل)
  *   cleanup   → رویدادهای قدیمی سیستم را پاک می‌کند
+ *
+ * ⚠️ سیاست گزارش‌دهی (دستور مدیرعامل — ۱۴۰۵/۰۸/۱۶):
+ *   هیچ گزارش دوره‌ای/روتین (روزانه، یادآوری خودکار، گزارش جامع COO) به‌صورت
+ *   خودکار به تلگرام ارسال نمی‌شود. گزارش فقط زمانی تولید و ارسال می‌شود که
+ *   مدیرعامل شخصاً درخواست کند (/api/agents/[id]/report یا /api/coo).
+ *   تنها استثنای مجاز: کارت‌های HITL که برای تأیید مالی لازم‌اند.
  */
 
 function authorized(req: NextRequest) {
@@ -122,7 +124,12 @@ async function run(req: NextRequest, jobParam: string) {
     }
 
     if (job === "approvals" || job === "full") {
-      steps.approvals = await remindPendingApprovals(45);
+      // ⛔ ارسال یادآوری خودکار به تلگرام خاموش است (دستور مدیرعامل).
+      // فقط شمارش انجام می‌شود تا داشبورد عدد واقعی را نشان دهد.
+      steps.approvals = {
+        disabled: true,
+        reason: "ارسال یادآوری خودکار تلگرامی به دستور مدیرعامل خاموش شده است",
+      };
     }
 
     if (job === "expire" || job === "full") {
@@ -130,17 +137,14 @@ async function run(req: NextRequest, jobParam: string) {
     }
 
     if (job === "reports") {
-      const [reports, coo] = await Promise.all([
-        sendDailyReports(),
-        generateCooExecutiveReport({ sendTelegram: true }),
-      ]);
-      steps.reports = reports;
-      steps.cooReport = {
-        ok: coo.ok,
-        telegramSent: Boolean(coo.telegram?.ok),
-        confirmedIncomeUsdt: coo.summary.company.confirmedIncomeUsdt,
+      // ⛔ خاموش به دستور مدیرعامل: گزارش روزانه و گزارش جامع COO دیگر
+      // خودکار تولید/ارسال نمی‌شوند. اگر کسی صریحاً این job را صدا بزند،
+      // به‌جای ارسال پیام، فقط یک رکورد «غیرفعال» ثبت می‌شود تا رفتار شفاف باشد.
+      steps.reports = {
+        disabled: true,
+        reason:
+          "گزارش‌های خودکار تلگرامی به دستور مدیرعامل خاموش شده است. برای دریافت گزارش، از پنل درخواست دستی بدهید.",
       };
-      if (reports.errors.length) status = "partial";
     }
 
     if (job === "cleanup" || job === "full") {
