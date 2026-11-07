@@ -709,6 +709,17 @@ async function main() {
           )
           .catch(() => {});
 
+        if (createCard) {
+        const sizingLine =
+          best.positionUsdt !== null
+            ? `مبلغ سفارش: ${best.positionUsdt} USDT (${riskPct}٪ از موجودی واقعی ${balanceProbe.exchangeName}${balanceProbe.testnet ? " • Testnet" : " • Mainnet"})`
+            : `مبلغ سفارش: تعیین نشده — ${balanceProbe.note}`;
+        const gateNote = !balanceProbe.keysConfigured
+          ? "⛔ این کار هنوز آماده اجرای واقعی نیست:\n• کلید API صرافی کامل ست نشده است\n   ↳ کلیدها را از پنل (کارت صرافی) کامل کنید."
+          : !balanceProbe.tradingOn
+            ? "⛔ این کار هنوز آماده اجرای واقعی نیست:\n• قفل ایمنی معامله بسته است (AGENT_TRADING_ENABLED=false)\n   ↳ از کارت «صرافی و روشن‌کردن کار واقعی» در پنل، قفل ارسال واقعی را باز کنید."
+            : `✅ آماده اجرا: با تأیید شما سفارش واقعی روی ${balanceProbe.exchangeName} (${balanceProbe.testnet ? "Testnet" : "Mainnet"}) ارسال می‌شود.`;
+
         const aiReason =
           (await askGemini(
             geminiKey,
@@ -754,7 +765,8 @@ async function main() {
           `• <b>نماد و جهت:</b> <code>${best.symbol}</code> (${escapeHtml(best.directionLabel)})\n` +
           `• <b>نقطه ورود:</b> <code>$${best.entryPrice}</code> | <b>اهرم کنترل‌شده:</b> <code>${best.leverage}x</code>\n` +
           `• <b>حد ضرر (SL):</b> <code>$${best.stopLoss}</code> | <b>حد سود (TP):</b> <code>$${best.takeProfit}</code> (R/R: ${best.riskReward})\n` +
-          `• 💰 <b>سود تخمینی:</b> <code>+${best.estimatedProfitUsdt} USDT</code>\n` +
+          `• 💵 <b>مبلغ سفارش:</b> <code>${best.positionUsdt !== null ? `${best.positionUsdt} USDT` : "تعیین نشده"}</code>\n` +
+          `• 💰 <b>سود تخمینی:</b> <code>${best.estimatedProfitUsdt !== null ? `+${best.estimatedProfitUsdt} USDT` : "—"}</code>\n` +
           `• ⏱ <b>زمان تقریبی:</b> ${escapeHtml(best.estimatedDuration)}\n` +
           `• 🧠 <b>دلیل تحلیل:</b> ${escapeHtml(aiReason)}\n\n` +
           `🔒 <i>قفل ایمنی مالی (COO): بدون کلیک شما روی [✅] هیچ واریز، برداشت یا نهایی‌سازی مالی انجام نمی‌شود.</i>`;
