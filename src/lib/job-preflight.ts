@@ -30,6 +30,7 @@ export type JobKind =
   | "withdraw"
   | "proposal"
   | "bounty"
+  | "mission"
   | "custom";
 
 export type PreflightBlocker = {
@@ -57,6 +58,7 @@ const SUPPORTED_KINDS: JobKind[] = [
   "withdraw",
   "proposal",
   "bounty",
+  "mission",
 ];
 
 /** کارهایی که هیچ‌وقت خودکار (بدون تأیید مدیرعامل) اجرا نمی‌شوند. */
@@ -66,6 +68,7 @@ const ALWAYS_HUMAN_KINDS: JobKind[] = [
   "confirm_deposit",
   "proposal",
   "bounty",
+  "mission",
 ];
 
 function blockerFromExchange(b: ExchangeBlocker): PreflightBlocker {
@@ -198,6 +201,11 @@ export async function preflightJobKind(
       }
       break;
     }
+
+    case "mission":
+      // مأموریت‌های حلقهٔ ۲۴/۷ کار داخلی (تحلیل/تدوین/بازرسی) هستند و
+      // هیچ تراکنش مالی از خودشان نمی‌سازند؛ پس پیش‌بررسی مالی ندارند.
+      break;
 
     case "proposal":
     case "bounty":
