@@ -107,7 +107,7 @@ export async function ensureSeed() {
         { key: "exchange_api_secret", value: "" },
         { key: "ai_provider", value: "" },
         { key: "ai_api_key", value: "" },
-        { key: "ai_model", value: "gemini-2.5-flash" },
+        { key: "ai_model", value: "gemini-3.5-flash" },
         { key: "risk_max_trade_pct", value: "2" },
         { key: "risk_max_leverage", value: "3" },
         { key: "risk_require_sl", value: "true" },
