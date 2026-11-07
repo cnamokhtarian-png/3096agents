@@ -20,14 +20,40 @@ export default function Login() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, password }),
       });
-      const d = await res.json();
+
+      // ⭐ پاسخ ممکن است بدنه نداشته باشد (خطای سرور یا قطع اتصال).
+      // نباید مستقیم res.json() را صدا بزنیم وگرنه کاربر پیام
+      // فنی «Unexpected end of JSON input» می‌بیند.
+      const raw = await res.text();
+      let d: any = null;
+      if (raw.trim()) {
+        try {
+          d = JSON.parse(raw);
+        } catch {
+          d = null;
+        }
+      }
+
       if (!res.ok) {
-        setErr(d.error || "ورود ناموفق بود");
+        setErr(
+          d?.error ||
+            (res.status === 503
+              ? "سرویس موقتاً در دسترس نیست. لطفاً چند لحظه بعد دوباره تلاش کنید."
+              : `ورود ناموفق بود (کد ${res.status})`)
+        );
+        return;
+      }
+      if (!d?.user) {
+        setErr("پاسخ نامعتبر از سرور دریافت شد. لطفاً دوباره تلاش کنید.");
         return;
       }
       router.push("/control");
     } catch (e: any) {
-      setErr(e?.message || "خطای شبکه");
+      setErr(
+        e?.name === "TypeError"
+          ? "ارتباط با سرور برقرار نشد. اتصال اینترنت را بررسی کنید."
+          : e?.message || "خطای ناشناخته"
+      );
     } finally {
       setLoading(false);
     }

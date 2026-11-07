@@ -159,17 +159,44 @@ let seeded = false;
 export async function ensureSeed() {
   if (seeded) return;
   try {
+    const adminEmail = (conf("ADMIN_EMAIL") || "admin@freelance.ir").toLowerCase();
+    const adminPassword = conf("ADMIN_PASSWORD");
     const existingUsers = await db.select().from(users).limit(1);
     if (existingUsers.length === 0) {
       await db
         .insert(users)
         .values({
-          email: conf("ADMIN_EMAIL") || "admin@freelance.ir",
-          passwordHash: hashPw(conf("ADMIN_PASSWORD") || "admin123"),
+          email: adminEmail,
+          passwordHash: hashPw(adminPassword || "admin123"),
           name: "مدیرعامل",
           role: "admin",
         })
         .onConflictDoNothing();
+    } else if (adminPassword) {
+      // ⭐ همگام‌سازی رمز مدیر با ADMIN_PASSWORD.
+      // بدون این، اگر رمز در Vercel عوض شود ولی کاربر از قبل در دیتابیس
+      // باشد، ورود همیشه با رمز قدیمی رد می‌شود و کاربر فکر می‌کند
+      // پرونده‌ی کلیدها مشکل دارد.
+      //
+      // اگر ADMIN_EMAIL تغییر کند ولی کاربر قدیمی با نقش admin باقی مانده
+      // باشد، هر دو همگام می‌شوند تا ورود با ایمیل جدید هم ممکن باشد.
+      const desiredHash = hashPw(adminPassword);
+      const adminRows = existingUsers.filter(
+        (u) =>
+          u.email.toLowerCase() === adminEmail ||
+          (u.role === "admin" && u.email.toLowerCase() !== adminEmail)
+      );
+      for (const row of adminRows) {
+        if (row.passwordHash !== desiredHash) {
+          await db
+            .update(users)
+            .set({ passwordHash: desiredHash })
+            .where(eq(users.id, row.id));
+          console.log(
+            `seed: رمز کاربر مدیر (${row.email}) با ADMIN_PASSWORD همگام شد`
+          );
+        }
+      }
     }
 
     const defaults: Array<{ key: string; value: string }> = [
