@@ -23,6 +23,7 @@ import { ENV, ConfigError } from "@/lib/env";
 import { guardAdmin } from "@/lib/auth";
 import { approveJob, getJob, rejectJob, syncTelegramApproval } from "@/lib/jobs";
 import { generateAgentReport } from "@/lib/report";
+import { conf } from "@/lib/config";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -77,7 +78,7 @@ async function logActivity(input: {
 
 /** دستورهای متنی مدیرعامل در تلگرام. */
 async function handleAdminCommand(text: string, chatId: string | number) {
-  const cmd = text.trim().split(/\s+/)[0].toLowerCase().replace(`@${process.env.TELEGRAM_BOT_USERNAME || ""}`, "");
+  const cmd = text.trim().split(/\s+/)[0].toLowerCase().replace(`@${conf("TELEGRAM_BOT_USERNAME")}`, "");
 
   if (cmd === "/start" || cmd === "/help") {
     await sendTelegramMessage(
@@ -265,7 +266,7 @@ export async function POST(req: NextRequest) {
 
       if (code === "op" && jobId) {
         const job = await getJob(jobId);
-        const base = process.env.NEXT_PUBLIC_APP_URL || "";
+        const base = conf("NEXT_PUBLIC_APP_URL");
         await answerCallbackQuery(
           cb.id,
           base ? `پنل: ${base}/control/office/${job?.agentId ?? ""}` : `کار #${jobId} — ${job?.status || "?"}`,

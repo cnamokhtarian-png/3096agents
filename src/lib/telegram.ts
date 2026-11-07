@@ -1,6 +1,7 @@
 import { ConfigError, ENV } from "@/lib/env";
 import { db } from "@/db";
 import { systemEvents } from "@/db/schema";
+import { conf } from "@/lib/config";
 
 /**
  * کلاینت واقعی Bot API تلگرام.
@@ -8,7 +9,7 @@ import { systemEvents } from "@/db/schema";
  * پیکربندی برمی‌گردد و در system_events به‌عنوان خطای واقعی ثبت می‌شود.
  */
 
-const API = (process.env.TELEGRAM_API_BASE || "https://api.telegram.org").replace(/\/$/, "");
+const API = (conf("TELEGRAM_API_BASE") || "https://api.telegram.org").replace(/\/$/, "");
 
 export type InlineButton = { text: string; callback_data: string; url?: string };
 export type ReplyMarkup = { inline_keyboard: InlineButton[][] };
@@ -131,7 +132,7 @@ export async function deleteWebhook() {
 }
 
 export function appBaseUrl(req?: Request) {
-  const fromEnv = (process.env.NEXT_PUBLIC_APP_URL || "").replace(/\/$/, "");
+  const fromEnv = conf("NEXT_PUBLIC_APP_URL").replace(/\/$/, "");
   if (fromEnv) return fromEnv;
   if (req) {
     const url = new URL(req.url);

@@ -1,9 +1,10 @@
 import { drizzle } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 import * as schema from "./schema";
+import { conf } from "@/lib/config";
 
 const databaseUrl =
-  process.env.DATABASE_URL ||
+  conf("DATABASE_URL") ||
   process.env.POSTGRES_URL ||
   process.env.SUPABASE_DB_URL;
 

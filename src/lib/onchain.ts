@@ -12,6 +12,8 @@
  *  checked=false            → امکان بررسی نبود (کلید یا شبکه در دسترس نیست)
  */
 
+import { conf } from "@/lib/config";
+
 export type VerifyResult = {
   checked: boolean;
   verified: boolean;
@@ -62,7 +64,7 @@ async function verifyTron(txHash: string, toAddress: string, amount: number): Pr
     return { checked: false, verified: false, network, reason: "هش تراکنش TRON باید ۶۴ کاراکتر هگز باشد" };
   }
   const headers: Record<string, string> = {};
-  if (process.env.TRONGRID_API_KEY) headers["TRON-PRO-API-KEY"] = process.env.TRONGRID_API_KEY;
+  if (conf("TRONGRID_API_KEY")) headers["TRON-PRO-API-KEY"] = conf("TRONGRID_API_KEY");
 
   try {
     const res = await fetch(`${TRON_GRID}/v1/transactions/${txHash}/events?only_confirmed=true`, {
@@ -130,7 +132,7 @@ async function verifyTron(txHash: string, toAddress: string, amount: number): Pr
 }
 
 async function verifyEvm(txHash: string, toAddress: string, amount: number, network: "ERC20" | "BEP20"): Promise<VerifyResult> {
-  const apiKey = process.env.ETHERSCAN_API_KEY;
+  const apiKey = conf("ETHERSCAN_API_KEY");
   if (!apiKey) {
     return {
       checked: false,

@@ -2,6 +2,7 @@ import { db } from "@/db";
 import { users, agents, settings } from "@/db/schema";
 import { createHash, createHmac, randomBytes } from "crypto";
 import { eq } from "drizzle-orm";
+import { conf } from "@/lib/config";
 
 /**
  * راه‌اندازی اولیه — بدون هیچ داده‌ی ساختگی.
@@ -17,11 +18,11 @@ import { eq } from "drizzle-orm";
 
 export const hashPw = (p: string) => createHash("sha256").update(p).digest("hex");
 
-const AUTH_SECRET = process.env.AUTH_SECRET || "freelance-agent-os-default-secret-key";
+const AUTH_SECRET = () => conf("AUTH_SECRET") || "freelance-agent-os-default-secret-key";
 
 export function signSession(payload: { id: number; email: string; name: string }) {
   const data = Buffer.from(JSON.stringify(payload)).toString("base64url");
-  const sig = createHmac("sha256", AUTH_SECRET).update(data).digest("base64url");
+  const sig = createHmac("sha256", AUTH_SECRET()).update(data).digest("base64url");
   return `${data}.${sig}`;
 }
 
@@ -29,7 +30,7 @@ export function verifySession(token: string) {
   try {
     const [data, sig] = token.split(".");
     if (!data || !sig) return null;
-    const expected = createHmac("sha256", AUTH_SECRET).update(data).digest("base64url");
+    const expected = createHmac("sha256", AUTH_SECRET()).update(data).digest("base64url");
     if (sig !== expected) return null;
     return JSON.parse(Buffer.from(data, "base64url").toString("utf8"));
   } catch {
@@ -43,8 +44,8 @@ export async function getMasterWallet(): Promise<{
   autoSweep: boolean;
 }> {
   const fallback = {
-    address: process.env.MASTER_WALLET_ADDRESS || "",
-    network: process.env.MASTER_WALLET_NETWORK || "USDT-TRC20",
+    address: conf("MASTER_WALLET_ADDRESS"),
+    network: conf("MASTER_WALLET_NETWORK") || "USDT-TRC20",
     autoSweep: true,
   };
   try {
@@ -163,8 +164,8 @@ export async function ensureSeed() {
       await db
         .insert(users)
         .values({
-          email: process.env.ADMIN_EMAIL || "admin@freelance.ir",
-          passwordHash: hashPw(process.env.ADMIN_PASSWORD || "admin123"),
+          email: conf("ADMIN_EMAIL") || "admin@freelance.ir",
+          passwordHash: hashPw(conf("ADMIN_PASSWORD") || "admin123"),
           name: "مدیرعامل",
           role: "admin",
         })
@@ -172,8 +173,8 @@ export async function ensureSeed() {
     }
 
     const defaults: Array<{ key: string; value: string }> = [
-      { key: "master_wallet_address", value: process.env.MASTER_WALLET_ADDRESS || "" },
-      { key: "master_wallet_network", value: process.env.MASTER_WALLET_NETWORK || "USDT-TRC20" },
+      { key: "master_wallet_address", value: conf("MASTER_WALLET_ADDRESS") },
+      { key: "master_wallet_network", value: conf("MASTER_WALLET_NETWORK") || "USDT-TRC20" },
       { key: "auto_sweep_enabled", value: "true" },
       { key: "webhook", value: "/api/telegram/webhook" },
     ];

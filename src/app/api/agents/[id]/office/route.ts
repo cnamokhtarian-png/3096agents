@@ -14,6 +14,7 @@ import { exchangeStatus } from "@/lib/exchange";
 import { telegramConfigured } from "@/lib/telegram";
 import { ENV } from "@/lib/env";
 import { guardAdmin } from "@/lib/auth";
+import { conf } from "@/lib/config";
 
 export const dynamic = "force-dynamic";
 
@@ -115,7 +116,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
       },
       worker: Boolean(ENV.workerUrl()),
       gemini: Boolean(ENV.geminiKey()),
-      appUrl: Boolean(process.env.NEXT_PUBLIC_APP_URL),
+      appUrl: Boolean(conf("NEXT_PUBLIC_APP_URL")),
     },
   });
 }

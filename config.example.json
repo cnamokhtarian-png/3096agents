@@ -1,0 +1,67 @@
+{
+  "$comment": "پرونده‌ی دائمی کلیدهای Agent Company OS — این فایل منبع حقیقت واحد (single source of truth) است و هرگز در بازنویسی‌های کد بازنویسی نمی‌شود. برای ویرایش، فقط همین فایل را تغییر دهید؛ برنامه همیشه ابتدا متغیرهای محیطی Vercel و سپس این فایل را می‌خواند.",
+  "$schema_version": 1,
+  "$updated_at": "2026-11-07",
+  "$do_not_commit_note": "اگر می‌خواهید این فایل در گیت بماند، کلیدها را خالی بگذارید و مقادیر را در Vercel Environment Variables ست کنید. مقادیر واقعی در Vercel (نوع sensitive) امن‌تر و پایدارتر است.",
+  "ai": {
+    "GEMINI_API_KEY": "",
+    "GEMINI_MODEL": "gemini-2.0-flash",
+    "GEMINI_BASE_URL": "https://generativelanguage.googleapis.com/v1beta"
+  },
+  "telegram": {
+    "TELEGRAM_BOT_TOKEN": "",
+    "TELEGRAM_ADMIN_CHAT_ID": "7590237754",
+    "TELEGRAM_CHAT_ID": "7590237754",
+    "TELEGRAM_BOT_USERNAME": "sina_freelance_agent_bot",
+    "TELEGRAM_WEBHOOK_SECRET": "",
+    "TELEGRAM_API_BASE": ""
+  },
+  "database": {
+    "DATABASE_URL": "postgres://postgres:Sina1996**96fgggfdfg@aws-1-eu-central-1.pooler.supabase.com:6543/postgres",
+    "DIRECT_URL": "postgres://postgres:Sina1996**96fgggfdfg@aws-1-eu-central-1.pooler.supabase.com:5432/postgres",
+    "NEXT_PUBLIC_SUPABASE_URL": "https://rvryatkhtakavinbpueh.supabase.co",
+    "SUPABASE_SERVICE_ROLE_KEY": ""
+  },
+  "exchange": {
+    "EXCHANGE_API_KEY": "",
+    "EXCHANGE_SECRET_KEY": "",
+    "EXCHANGE_API_SECRET": "",
+    "EXCHANGE_TESTNET": "true",
+    "EXCHANGE_BASE_URL": "",
+    "AGENT_TRADING_ENABLED": "false"
+  },
+  "auth": {
+    "ADMIN_EMAIL": "admin@freelance.ir",
+    "ADMIN_PASSWORD": "",
+    "AUTH_SECRET": "",
+    "ADMIN_API_SECRET": "",
+    "AGENT_MASTER_API_KEY": ""
+  },
+  "wallet": {
+    "MASTER_WALLET_ADDRESS": "",
+    "MASTER_WALLET_NETWORK": "TRC20"
+  },
+  "onchain": {
+    "TRONGRID_API_KEY": "",
+    "ETHERSCAN_API_KEY": ""
+  },
+  "worker": {
+    "AGENT_WORKER_URL": "",
+    "AGENT_WORKER_TOKEN": ""
+  },
+  "cron": {
+    "CRON_SECRET": ""
+  },
+  "app": {
+    "NEXT_PUBLIC_APP_URL": "https://freelance-agent-os.vercel.app"
+  },
+  "$agent_keys": {
+    "$note": "کلید اختصاصی هر کارمند. اگر خالی بماند، هنگام seed یک کلید تصادفی امن ساخته می‌شود و در دیتابیس ذخیره می‌گردد.",
+    "AGENT_KEY_CRYPTO_EMPLOYEE": "",
+    "AGENT_KEY_NEXTJS_BUILDER": "",
+    "AGENT_KEY_TELEGRAM_CLOSER": "",
+    "AGENT_KEY_PPTX_DESIGNER": "",
+    "AGENT_KEY_WEB3_TRANSLATOR": "",
+    "AGENT_KEY_CUSTOM_WEBHOOK_WORKER": ""
+  }
+}

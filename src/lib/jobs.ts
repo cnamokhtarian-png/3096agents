@@ -21,6 +21,7 @@ import {
   escapeHtml,
 } from "@/lib/telegram";
 import { buildAgentFacts } from "@/lib/report";
+import { conf } from "@/lib/config";
 
 /**
  * صف کار واقعی ایجنت‌ها.
@@ -426,7 +427,7 @@ async function executeToolRun(job: JobRecord): Promise<ExecutionResult> {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        ...(process.env.AGENT_WORKER_TOKEN ? { Authorization: `Bearer ${process.env.AGENT_WORKER_TOKEN}` } : {}),
+        ...(conf("AGENT_WORKER_TOKEN") ? { Authorization: `Bearer ${conf("AGENT_WORKER_TOKEN")}` } : {}),
       },
       body: JSON.stringify({
         jobId: job.id,

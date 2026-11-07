@@ -1,5 +1,6 @@
 import { createHmac, randomUUID } from "crypto";
 import { ConfigError, ENV } from "@/lib/env";
+import { conf } from "@/lib/config";
 
 /**
  * کلاینت واقعی صرافی Binance Spot (سازگار با Testnet).
@@ -50,13 +51,13 @@ export class ExchangeError extends Error {
 
 function baseUrl(testnet = ENV.exchangeTestnet()) {
   // امکان تست/پروکسی: EXCHANGE_BASE_URL روی هر اندپوینت سازگار Binance
-  const override = (process.env.EXCHANGE_BASE_URL || "").replace(/\/$/, "");
+  const override = conf("EXCHANGE_BASE_URL").replace(/\/$/, "");
   if (override) return override;
   return testnet ? TESTNET_BASE : LIVE_BASE;
 }
 
 function publicBaseUrl() {
-  return (process.env.EXCHANGE_BASE_URL || "").replace(/\/$/, "") || LIVE_BASE;
+  return conf("EXCHANGE_BASE_URL").replace(/\/$/, "") || LIVE_BASE;
 }
 
 export function exchangeStatus() {

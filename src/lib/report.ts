@@ -11,6 +11,7 @@ import { ENV } from "@/lib/env";
 import { exchangeStatus } from "@/lib/exchange";
 import { getMarketOverview } from "@/lib/market";
 import { getMasterWallet } from "@/lib/seed";
+import { conf } from "@/lib/config";
 
 /**
  * گزارش وضعیت کارمند — کاملاً بر پایه‌ی داده‌های واقعی دیتابیس.
@@ -199,7 +200,7 @@ export async function generateAgentReport(
     return { ok: true, text: fallback, source: "database", facts };
   }
 
-  const model = process.env.GEMINI_MODEL || "gemini-2.0-flash";
+  const model = conf("GEMINI_MODEL") || "gemini-2.0-flash";
   const prompt = [
     "تو دستیار مدیرعامل یک شرکت ایجنت‌های دیجیتال هستی.",
     "فقط بر اساس JSON زیر یک گزارش وضعیت فارسی، رسمی، کوتاه (حداکثر ۱۸ خط) بنویس.",

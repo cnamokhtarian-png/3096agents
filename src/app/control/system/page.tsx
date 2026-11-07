@@ -181,6 +181,76 @@ export default function SystemPage() {
           </div>
         )}
 
+        {/* پرونده‌ی دائمی کلیدها */}
+        {env?.persistentConfig && (
+          <div
+            className={`mt-3 rounded-3xl border p-4 ${
+              env.persistentConfig.present
+                ? "border-emerald-400/30 bg-emerald-500/10"
+                : "border-amber-400/30 bg-amber-500/10"
+            }`}
+          >
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-base">{env.persistentConfig.present ? "🔒" : "⚠️"}</span>
+              <h2 className="text-[12px] font-black">
+                پرونده‌ی دائمی کلیدها (<span dir="ltr">config.json</span>)
+              </h2>
+              <span
+                className={`rounded-full px-2 py-0.5 text-[9px] font-bold ${
+                  env.persistentConfig.present
+                    ? "bg-emerald-500/20 text-emerald-300"
+                    : "bg-amber-500/20 text-amber-300"
+                }`}
+              >
+                {env.persistentConfig.present ? "موجود — کلیدها از این پرونده خوانده می‌شوند" : "پیدا نشد"}
+              </span>
+            </div>
+            <p className="mt-1 text-[10px] leading-5 text-slate-300/80">{env.persistentConfig.note}</p>
+            <p className="mt-1 text-[9px] leading-5 text-slate-500">
+              ترتیب خواندن هر کلید: <span dir="ltr">Vercel Env → config.json → .env.local</span> — پس
+              بازنویسی کد هیچ کلیدی را از کار نمی‌اندازد.
+            </p>
+            {env.inventory && (
+              <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+                {env.inventory.map((g: any) => (
+                  <div key={g.group} className="rounded-2xl border border-white/5 bg-black/25 p-3">
+                    <p className="text-[10px] font-black text-slate-200">{g.label}</p>
+                    <ul className="mt-1.5 space-y-1">
+                      {g.items.map((it: any) => (
+                        <li
+                          key={it.key}
+                          className="flex items-center justify-between gap-2 rounded-lg bg-white/[0.03] px-2 py-1"
+                        >
+                          <span className="font-mono text-[9px] text-slate-300" dir="ltr">
+                            {it.key}
+                          </span>
+                          <span className="flex shrink-0 items-center gap-1">
+                            {it.preview && (
+                              <span className="font-mono text-[9px] text-slate-500" dir="ltr">
+                                {it.preview}
+                              </span>
+                            )}
+                            <span
+                              className={`rounded-full px-1.5 py-0.5 text-[8px] font-bold ${
+                                it.present
+                                  ? "bg-emerald-500/15 text-emerald-300"
+                                  : "bg-slate-500/15 text-slate-500"
+                              }`}
+                              title={`منبع: ${it.source}`}
+                            >
+                              {it.present ? it.source : "غایب"}
+                            </span>
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
         {/* چک‌لیست محیط */}
         <div className="mt-4 rounded-3xl border border-white/10 bg-white/[0.03] p-5">
           <h2 className="text-sm font-black">🧾 چک‌لیست Environment Variables</h2>

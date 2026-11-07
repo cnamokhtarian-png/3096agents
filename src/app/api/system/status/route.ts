@@ -13,6 +13,7 @@ import { testExchangeConnection, exchangeStatus } from "@/lib/exchange";
 import { getWebhookInfo, telegramConfigured } from "@/lib/telegram";
 import { currentUser, guardAdmin } from "@/lib/auth";
 import { ensureSeed } from "@/lib/seed";
+import { conf } from "@/lib/config";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -92,7 +93,7 @@ export async function GET(req: NextRequest) {
     cron: {
       last: lastCron[0] ?? null,
       recent: crons,
-      secretConfigured: Boolean(process.env.CRON_SECRET),
+      secretConfigured: Boolean(conf("CRON_SECRET")),
       schedule: "*/10 * * * * (market/queue) + روزانه reports",
     },
     queue: {

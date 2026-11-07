@@ -6,6 +6,8 @@
  * برنمی‌گردد؛ فقط «ست شده / ست نشده» و توضیح کارکرد.
  */
 
+import { conf, hasConf, configInventory, configFileExists } from "@/lib/config";
+
 export type EnvCheck = {
   key: string;
   label: string;
@@ -19,8 +21,7 @@ export type EnvCheck = {
 type Def = Omit<EnvCheck, "present"> & { check?: () => boolean };
 
 function has(key: string) {
-  const v = process.env[key];
-  return typeof v === "string" && v.trim().length > 0;
+  return hasConf(key);
 }
 
 const DEFS: Def[] = [
@@ -217,7 +218,7 @@ export function auditEnv() {
   const exchangeReady =
     (has("EXCHANGE_API_KEY") || has("BINANCE_API_KEY")) &&
     (has("EXCHANGE_SECRET_KEY") || has("EXCHANGE_API_SECRET") || has("BINANCE_SECRET_KEY"));
-  const tradingEnabled = String(process.env.AGENT_TRADING_ENABLED).toLowerCase() === "true";
+  const tradingEnabled = conf("AGENT_TRADING_ENABLED").toLowerCase() === "true";
 
   return {
     checks,
@@ -240,6 +241,15 @@ export function auditEnv() {
       node: process.version,
       nodeEnv: process.env.NODE_ENV || "development",
     },
+    // پرونده‌ی دائمی کلیدها: هر کلید از محیط یا از config.json خوانده می‌شود.
+    persistentConfig: {
+      file: "config.json",
+      present: configFileExists(),
+      note: configFileExists()
+        ? "کلیدها از پرونده‌ی دائمی پروژه خوانده می‌شوند و در بازنویسی کد گم نمی‌شوند."
+        : "پرونده‌ی دائمی پیدا نشد؛ کلیدها فقط از متغیرهای محیطی خوانده می‌شوند.",
+    },
+    inventory: configInventory(),
   };
 }
 
@@ -248,24 +258,20 @@ export function requireEnv(keys: string[]): string[] {
 }
 
 export const ENV = {
-  telegramToken: () => process.env.TELEGRAM_BOT_TOKEN?.trim() || "",
-  telegramAdminChat: () => process.env.TELEGRAM_ADMIN_CHAT_ID?.trim() || "",
-  telegramSecret: () => process.env.TELEGRAM_WEBHOOK_SECRET?.trim() || "",
+  telegramToken: () => conf("TELEGRAM_BOT_TOKEN"),
+  telegramAdminChat: () => conf("TELEGRAM_ADMIN_CHAT_ID"),
+  telegramSecret: () => conf("TELEGRAM_WEBHOOK_SECRET"),
   // پذیرش نام‌های رایج هر دو سبک (سازگاری با envهای موجود در Vercel)
-  exchangeKey: () =>
-    process.env.EXCHANGE_API_KEY?.trim() ||
-    process.env.BINANCE_API_KEY?.trim() ||
-    "",
+  exchangeKey: () => conf("EXCHANGE_API_KEY") || conf("BINANCE_API_KEY"),
   exchangeSecret: () =>
-    process.env.EXCHANGE_SECRET_KEY?.trim() ||
-    process.env.EXCHANGE_API_SECRET?.trim() ||
-    process.env.BINANCE_SECRET_KEY?.trim() ||
-    "",
-  exchangeTestnet: () => String(process.env.EXCHANGE_TESTNET).toLowerCase() === "true",
-  tradingEnabled: () => String(process.env.AGENT_TRADING_ENABLED).toLowerCase() === "true",
-  geminiKey: () => process.env.GEMINI_API_KEY?.trim() || "",
-  cronSecret: () => process.env.CRON_SECRET?.trim() || "",
-  workerUrl: () => process.env.AGENT_WORKER_URL?.trim() || "",
+    conf("EXCHANGE_SECRET_KEY") ||
+    conf("EXCHANGE_API_SECRET") ||
+    conf("BINANCE_SECRET_KEY"),
+  exchangeTestnet: () => conf("EXCHANGE_TESTNET").toLowerCase() === "true",
+  tradingEnabled: () => conf("AGENT_TRADING_ENABLED").toLowerCase() === "true",
+  geminiKey: () => conf("GEMINI_API_KEY"),
+  cronSecret: () => conf("CRON_SECRET"),
+  workerUrl: () => conf("AGENT_WORKER_URL"),
 };
 
 /** خطای پیکربندی: یعنی یک قابلیت واقعی هنوز ست نشده است (نه شبیه‌سازی). */

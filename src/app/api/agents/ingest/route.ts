@@ -6,6 +6,7 @@ import { ensureSeed, getMasterWallet } from "@/lib/seed";
 import { ingestExternalIncome, recordAgentError } from "@/lib/agent-execution";
 import { createJob } from "@/lib/jobs";
 import { normalizeNetwork } from "@/lib/onchain";
+import { conf } from "@/lib/config";
 
 export const dynamic = "force-dynamic";
 
@@ -67,7 +68,7 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const masterKey = process.env.AGENT_MASTER_API_KEY?.trim();
+  const masterKey = conf("AGENT_MASTER_API_KEY");
   const allAgents = await db.select().from(agents);
 
   let targetAgent: (typeof allAgents)[number] | undefined;

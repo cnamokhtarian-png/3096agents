@@ -6,6 +6,7 @@ import { ensureSeed, getMasterWallet } from "@/lib/seed";
 import { actorOf, guardAdmin } from "@/lib/auth";
 import { exchangeStatus, getAccountBalances } from "@/lib/exchange";
 import { normalizeNetwork } from "@/lib/onchain";
+import { conf } from "@/lib/config";
 
 export const dynamic = "force-dynamic";
 
@@ -57,8 +58,8 @@ export async function GET(req: NextRequest) {
       databaseConnected: true,
       isVercel: Boolean(process.env.VERCEL),
       region: process.env.VERCEL_REGION || "local",
-      telegramConfigured: Boolean(process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_ADMIN_CHAT_ID),
-      cronConfigured: Boolean(process.env.CRON_SECRET),
+      telegramConfigured: Boolean(conf("TELEGRAM_BOT_TOKEN") && conf("TELEGRAM_ADMIN_CHAT_ID")),
+      cronConfigured: Boolean(conf("CRON_SECRET")),
       tradingEnabled: ex.tradingEnabled,
     },
     transactions: txList.slice(0, 50),

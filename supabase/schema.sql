@@ -219,6 +219,8 @@ CREATE TABLE IF NOT EXISTS agentos.exchange_orders (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- market_snapshots ممکن است از قبل با اسکیمای قدیمی‌تر وجود داشته باشد؛
+-- در آن صورت فقط ستون‌های لازم به آن اضافه می‌شود (idempotent).
 CREATE TABLE IF NOT EXISTS agentos.market_snapshots (
   id BIGSERIAL PRIMARY KEY,
   symbol TEXT NOT NULL,
@@ -227,6 +229,10 @@ CREATE TABLE IF NOT EXISTS agentos.market_snapshots (
   source TEXT NOT NULL DEFAULT 'binance',
   fetched_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE agentos.market_snapshots ADD COLUMN IF NOT EXISTS change_pct NUMERIC(12, 4);
+ALTER TABLE agentos.market_snapshots ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'binance';
+ALTER TABLE agentos.market_snapshots ADD COLUMN IF NOT EXISTS fetched_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
 
 CREATE INDEX IF NOT EXISTS market_snapshots_symbol_idx
   ON agentos.market_snapshots (symbol, fetched_at DESC);

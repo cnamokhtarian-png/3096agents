@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
 import { verifySession } from "@/lib/seed";
+import { conf } from "@/lib/config";
 
 export type SessionUser = { id: number; email: string; name: string };
 
@@ -17,7 +18,7 @@ export function currentUser(req: NextRequest): SessionUser | null {
 export function guardAdmin(req: NextRequest): Response | null {
   if (currentUser(req)) return null;
   // اجازه‌ی ماشین‌به‌ماشین با سکرت عملیاتی (برای اسکریپت‌های خودکار مدیر)
-  const opSecret = process.env.ADMIN_API_SECRET;
+  const opSecret = conf("ADMIN_API_SECRET");
   const header = req.headers.get("x-admin-secret");
   if (opSecret && header && header === opSecret) return null;
   return Response.json(

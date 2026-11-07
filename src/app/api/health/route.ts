@@ -1,5 +1,6 @@
 import { db } from "@/db";
 import { sql } from "drizzle-orm";
+import { conf } from "@/lib/config";
 
 export const dynamic = "force-dynamic";
 
@@ -16,7 +17,7 @@ function errDetail(e: unknown): string {
 
 function dbTarget(): string {
   try {
-    const raw = process.env.DATABASE_URL || "";
+    const raw = conf("DATABASE_URL");
     if (!raw) return "DATABASE_URL is empty";
     const u = new URL(raw);
     const user = (u.username || "?").split(".")[0];
