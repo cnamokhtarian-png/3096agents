@@ -102,23 +102,30 @@ export async function resolveExchangeConfig(): Promise<ExchangeRuntimeConfig> {
 
   const envKey = ENV.exchangeKey();
   const envSecret = ENV.exchangeSecret();
-  const apiKey = envKey || dbKey;
-  const apiSecret = envSecret || dbSecret;
+  // باندل کاملِ ذخیره‌شده از پنل (نام صرافی + کلید + سکرت در جدول settings)
+  // یک مجموعهٔ منسجم است و بر کلیدهای Env اولویت دارد؛ چون مدیرعامل صرافی را
+  // آگاهانه از پنل انتخاب کرده است (مثلاً Tabdeal) و نباید کلیدهای یک صرافی
+  // دیگر از Env بی‌صدا جایگزین آن شوند. اگر باندل پنل کامل نباشد، از Env
+  // استفاده می‌شود.
+  const dbBundleComplete = Boolean(dbKey && dbSecret);
+  const apiKey = dbBundleComplete ? dbKey : envKey || dbKey;
+  const apiSecret = dbBundleComplete ? dbSecret : envSecret || dbSecret;
   const envEx = conf("EXCHANGE_NAME").trim().toLowerCase();
   const baseOverride = conf("EXCHANGE_BASE_URL").trim().toLowerCase();
   const isTabdeal =
     baseOverride.includes("tabdeal") ||
     envEx === "tabdeal" ||
+    (dbBundleComplete && dbExchange === "tabdeal") ||
     (!envEx && !baseOverride && dbExchange === "tabdeal" && !envKey && Boolean(dbKey));
 
   // اتصال مستقیم به متغیر AGENT_TRADING_ENABLED در Vercel (با پشتیبانی از فلگ دیتابیس)
   const envTrading = ENV.tradingEnabled();
   const dbTradingOn = ["true", "1", "yes", "on"].includes(dbTrading);
 
-  // پیش‌فرض امن: تا وقتی صریحاً EXCHANGE_TESTNET=false نشده، همه چیز Testnet است.
-  // (با این کار روشن‌کردن AGENT_TRADING_ENABLED به‌تنهایی هرگز پول واقعی را
-  //  به خطر نمی‌اندازد؛ برای Mainnet باید کاربرها صریحاً false بگذارند.)
-  const rawTestnet = conf("EXCHANGE_TESTNET").trim().toLowerCase() || dbTestnet;
+  // پیش‌فرض امن: تا وقتی صریحاً تست‌نت خاموش نشده، همه چیز Testnet است.
+  // اولویّت با تنظیمی است که مدیرعامل از پنل ذخیره کرده (exchange_testnet)؛
+  // سپس متغیر محیطی EXCHANGE_TESTNET؛ برای Mainnet باید صریحاً false شود.)
+  const rawTestnet = dbTestnet || conf("EXCHANGE_TESTNET").trim().toLowerCase();
   const testnet = rawTestnet
     ? !["false", "0", "no", "off"].includes(rawTestnet)
     : true;

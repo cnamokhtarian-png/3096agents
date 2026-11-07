@@ -10,7 +10,7 @@ import {
   tasks,
   toolRuns,
 } from "@/db/schema";
-import { and, asc, desc, eq, inArray, lt, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, lt, sql } from "drizzle-orm";
 import { ConfigError, ENV } from "@/lib/env";
 import { ExchangeError, placeRealOrder } from "@/lib/exchange";
 import { confirmDeposit, ingestExternalIncome, recordAgentError } from "@/lib/agent-execution";
@@ -806,14 +806,27 @@ export async function runQueuedJobs(limit = 5) {
   return results;
 }
 
-/** یادآوری درخواست‌های تأییدِ بی‌پاسخ به تلگرام (کرون). */
-export async function remindPendingApprovals(olderThanMinutes = 30) {
+/**
+ * یادآوری درخواست‌های تأییدِ بی‌پاسخ به تلگرام (کرون).
+ * فقط کارهایی یادآوری می‌شوند که سنشان داخل پنجرهٔ [olderThanMinutes,
+ * olderThanMinutes + windowMinutes) باشد؛ بنابراین با اجرای چرخه هر ۳۰
+ * دقیقه، هر کار حداکثر یک‌بار یادآوری می‌شود و تلگرام مدیرعامل اسپم نمی‌شود.
+ */
+export async function remindPendingApprovals(olderThanMinutes = 45, windowMinutes = 40) {
   if (!telegramConfigured() || !ENV.telegramAdminChat()) return { sent: 0, skipped: "telegram_not_configured" };
-  const cutoff = new Date(Date.now() - olderThanMinutes * 60_000);
+  const now = Date.now();
+  const newest = new Date(now - olderThanMinutes * 60_000);
+  const oldest = new Date(now - (olderThanMinutes + windowMinutes) * 60_000);
   const rows = await db
     .select()
     .from(agentJobs)
-    .where(and(eq(agentJobs.status, "awaiting_approval"), lt(agentJobs.createdAt, cutoff)))
+    .where(
+      and(
+        eq(agentJobs.status, "awaiting_approval"),
+        lt(agentJobs.createdAt, newest),
+        gt(agentJobs.createdAt, oldest),
+      ),
+    )
     .orderBy(asc(agentJobs.createdAt))
     .limit(5);
 

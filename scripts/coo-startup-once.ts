@@ -3,10 +3,14 @@
  * در محیط محلی (بدون VERCEL_ENV=production) بلافاصله بدون تغییر خارج می‌شود.
  */
 import pg from "pg";
+import { createHmac } from "crypto";
 import { conf } from "../src/lib/config.ts";
 import { buildTechnicalSetup, type Candle, type TechnicalSetup } from "../src/lib/indicators.ts";
 
-const STARTUP_LOCK_KEY = "coo_startup_v2026_11_07_r1";
+// r2: فرمان اجرایی مدیرعامل (فعال‌سازی واقعی ناوگان پس از ریست صفر) —
+//     اسکن واقعی بازار با سایزینگ از موجودی واقعی صرافی، کارت فقط روی
+//     سیگنال معتبر (actionable) و بدون تکرار کارتِ در انتظار تأیید.
+const STARTUP_LOCK_KEY = "coo_startup_v2026_11_07_r2";
 const COO_NAME = "RNAI · مدیر ارشد اجرایی (COO)";
 
 const PROTOCOLS: Record<
@@ -243,6 +247,107 @@ async function fetchLiveCandles(sym: string): Promise<{
   return null;
 }
 
+type ExchangeBalanceProbe = {
+  availableUsdt: number | null;
+  keysConfigured: boolean;
+  tradingOn: boolean;
+  exchangeName: "binance" | "tabdeal";
+  testnet: boolean;
+  note: string;
+};
+
+/**
+ * موجودی واقعی USDT از صرافی — آینهٔ resolveExchangeConfig در src/lib/exchange.ts:
+ * باندل کامل پنل (settings) بر Env اولویت دارد. هیچ عددی ساخته نمی‌شود؛
+ * اگر کلید نباشد یا صرافی پاسخ ندهد، availableUsdt ‏null می‌ماند و اندازهٔ
+ * پوزیشن «تعیین نشده» گزارش می‌شود.
+ */
+async function fetchRealUsdtBalance(
+  settingsMap: Record<string, string>,
+): Promise<ExchangeBalanceProbe> {
+  const dbKey = (settingsMap.exchange_api_key || "").trim();
+  const dbSecret = (settingsMap.exchange_api_secret || "").trim();
+  const dbExchange = (settingsMap.exchange_name || "").trim().toLowerCase();
+  const envKey = conf("EXCHANGE_API_KEY") || conf("BINANCE_API_KEY");
+  const envSecret =
+    conf("EXCHANGE_SECRET_KEY") || conf("EXCHANGE_API_SECRET") || conf("BINANCE_API_SECRET");
+  const dbBundle = Boolean(dbKey && dbSecret);
+  const apiKey = dbBundle ? dbKey : envKey;
+  const apiSecret = dbBundle ? dbSecret : envSecret;
+  const exchangeName: "binance" | "tabdeal" =
+    dbBundle && dbExchange === "tabdeal" ? "tabdeal" : "binance";
+  const tradingOn =
+    ["true", "1", "yes", "on"].includes(conf("AGENT_TRADING_ENABLED").toLowerCase()) ||
+    ["true", "1", "yes", "on"].includes((settingsMap.agent_trading_enabled || "").toLowerCase());
+  const rawTestnet = (settingsMap.exchange_testnet || conf("EXCHANGE_TESTNET") || "true")
+    .trim()
+    .toLowerCase();
+  const testnet = exchangeName !== "tabdeal" && !["false", "0", "no", "off"].includes(rawTestnet);
+
+  if (!apiKey || !apiSecret) {
+    return {
+      availableUsdt: null,
+      keysConfigured: false,
+      tradingOn,
+      exchangeName,
+      testnet,
+      note: "کلید API صرافی کامل نیست؛ موجودی قابل خواندن نیست و مبلغ سفارش تعیین نمی‌شود.",
+    };
+  }
+
+  const host =
+    exchangeName === "tabdeal"
+      ? "https://api1.tabdeal.org"
+      : testnet
+        ? "https://testnet.binance.vision"
+        : "https://api.binance.com";
+  const path = exchangeName === "tabdeal" ? "/api/v1/account" : "/api/v3/account";
+  const query = new URLSearchParams({
+    timestamp: String(Date.now()),
+    recvWindow: "5000",
+  }).toString();
+  const signature = createHmac("sha256", apiSecret).update(query).digest("hex");
+
+  try {
+    const res = await fetch(`${host}${path}?${query}&signature=${signature}`, {
+      headers: { "X-MBX-APIKEY": apiKey },
+      signal: AbortSignal.timeout(9000),
+    });
+    const j: any = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      return {
+        availableUsdt: null,
+        keysConfigured: true,
+        tradingOn,
+        exchangeName,
+        testnet,
+        note: `خواندن موجودی از ${exchangeName} ناموفق بود (HTTP ${res.status}${j?.msg ? `: ${j.msg}` : ""})؛ مبلغ سفارش تعیین نمی‌شود.`,
+      };
+    }
+    const usdt = (j?.balances || []).find(
+      (b: any) => String(b?.asset).toUpperCase() === "USDT",
+    );
+    const free = usdt ? Number(usdt.free) : 0;
+    return {
+      availableUsdt: Number.isFinite(free) ? free : 0,
+      keysConfigured: true,
+      tradingOn,
+      exchangeName,
+      testnet,
+      note: `موجودی آزاد USDT در ${exchangeName} (${testnet ? "Testnet" : "Mainnet"}): ${free}`,
+    };
+  } catch (e: any) {
+    return {
+      availableUsdt: null,
+      keysConfigured: true,
+      tradingOn,
+      exchangeName,
+      testnet,
+      note: `اتصال به ${exchangeName} برای خواندن موجودی ناموفق بود (${e?.message || "network"})؛ مبلغ سفارش تعیین نمی‌شود.`,
+    };
+  }
+}
+
 async function fetchVerifiedBounty(): Promise<{
   title: string;
   link: string;
@@ -469,6 +574,12 @@ async function main() {
     // ۲. موتور زنده آریا (A1) — تحلیل کندل‌های واقعی و ارسال کارت پیشنهاد به تلگرام
     const aria = allAgents.find((a: any) => a.slug === "crypto-employee");
     const setups: TechnicalSetup[] = [];
+    // موجودی واقعی صرافی + درصد ریسک تنظیم‌شده: تنها منبع مجاز سایزینگ.
+    const balanceProbe = await fetchRealUsdtBalance(settingsMap);
+    const riskPct = Math.min(
+      20,
+      Math.max(0.1, Number(settingsMap.risk_max_trade_pct) || 2),
+    );
     if (aria && aria.status === "active") {
       for (const sym of ["BTCUSDT", "ETHUSDT", "TONUSDT"]) {
         const data = await fetchLiveCandles(sym);
@@ -480,7 +591,8 @@ async function main() {
           changePct24h: data.change24h,
           source: data.source,
           maxLeverage: 3,
-          positionUsdt: 150,
+          availableUsdt: balanceProbe.availableUsdt,
+          riskPct,
         });
         setups.push(setup);
 
@@ -526,12 +638,45 @@ async function main() {
                 (s) =>
                   `${s.symbol}: $${s.entryPrice} (RSI=${s.rsi}, MACD=${s.macdHist}, حمایت=$${s.support}, مقاومت=$${s.resistance}, سوگیری=${s.directionLabel})`,
               )
-              .join(" • "),
-            JSON.stringify({ bestSymbol: best.symbol, confidence: best.confidence }),
+              .join(" • ") + ` • ${balanceProbe.note}`,
+            JSON.stringify({
+              bestSymbol: best.symbol,
+              confidence: best.confidence,
+              actionable: best.actionable,
+              availableUsdt: balanceProbe.availableUsdt,
+              exchange: balanceProbe.exchangeName,
+              testnet: balanceProbe.testnet,
+            }),
           ],
         );
 
-        await pool
+        // کارت پیشنهاد فقط روی سیگنال معتبر (actionable) و فقط وقتی کارت
+        // معاملاتی دیگری در انتظار تأیید مدیرعامل نیست ساخته می‌شود؛
+        // در غیر این صورت فقط تحلیل ثبت می‌شود و هیچ عدد/کارتی ساخته نمی‌شود.
+        const pendingTradeRes = await pool.query(
+          `SELECT COUNT(*)::int AS cnt FROM agentos.agent_jobs
+           WHERE kind = 'trade' AND status IN ('awaiting_approval', 'pending_approval')`,
+        );
+        const pendingTrades = Number(pendingTradeRes.rows[0]?.cnt || 0);
+        const createCard = best.actionable && pendingTrades === 0;
+
+        if (!createCard) {
+          await pool.query(
+            `INSERT INTO agentos.agent_activity_logs (agent_id, agent_name, action, status, detail, source, meta)
+             VALUES ($1, $2, $3, 'info', $4, 'aria_engine', $5::jsonb)`,
+            [
+              aria.id,
+              aria.name,
+              "بدون کارت پیشنهاد در این چرخه",
+              !best.actionable
+                ? `بهترین ستاپ ${best.symbol} به آستانه سیگنال معتبر نرسید (اطمینان ${best.confidence}٪، R/R ${best.riskReward})؛ طبق دستور مدیرعامل هیچ پیشنهاد حدسی به تلگرام ارسال نشد.`
+                : `یک کارت معاملاتی (#در انتظار تأیید) از قبل باز است؛ برای جلوگیری از تکرار، کارت جدید ساخته نشد.`,
+              JSON.stringify({ bestSymbol: best.symbol, pendingTrades }),
+            ],
+          );
+        }
+
+        if (createCard) await pool
           .query(
             `INSERT INTO agentos.trade_signals
              (agent_id, agent_name, symbol, side, entry_price, take_profit, stop_loss, target_pct, stop_pct, risk_reward, leverage, position_usdt, estimated_profit_usdt, confidence, rsi, macd_hist, ma20, ma50, support, resistance, volatility_pct, data_source, analysis_reason, status)
@@ -548,8 +693,8 @@ async function main() {
               best.stopPct,
               best.riskReward,
               best.leverage,
-              best.positionUsdt,
-              best.estimatedProfitUsdt,
+              best.positionUsdt ?? 0,
+              best.estimatedProfitUsdt ?? 0,
               best.confidence,
               best.rsi,
               best.macdHist,
@@ -595,7 +740,7 @@ async function main() {
             aria.id,
             aria.name,
             jobTitle,
-            `${aiReason}\nورود: $${best.entryPrice} | حد ضرر: $${best.stopLoss} | حد سود: $${best.takeProfit}`,
+            `${aiReason}\nورود: $${best.entryPrice} | حد ضرر: $${best.stopLoss} | حد سود: $${best.takeProfit}\n${sizingLine}\n\n${gateNote}`,
             JSON.stringify(tradePayload),
           ],
         );
@@ -620,6 +765,7 @@ async function main() {
             `UPDATE agentos.agent_jobs SET telegram_message_id = $1 WHERE id = $2`,
             [msgId, tradeJobId],
           );
+        }
         }
       }
     }
@@ -804,12 +950,27 @@ async function main() {
       })
       .sort((a: any, b: any) => b.earned - a.earned || b.score - a.score);
 
-    const tradingNow = ["true", "1", "yes", "on"].includes(
-      conf("AGENT_TRADING_ENABLED").toLowerCase(),
-    );
-    const testnetNow = ["true", "1", "yes", "on"].includes(
-      conf("EXCHANGE_TESTNET").toLowerCase(),
-    );
+    const tradingNow =
+      ["true", "1", "yes", "on"].includes(
+        conf("AGENT_TRADING_ENABLED").toLowerCase(),
+      ) ||
+      ["true", "1", "yes", "on"].includes(
+        (settingsMap.agent_trading_enabled || "").toLowerCase(),
+      );
+    const resolvedExchange = (
+      settingsMap.exchange_api_key && settingsMap.exchange_api_secret
+        ? settingsMap.exchange_name || conf("EXCHANGE_NAME")
+        : conf("EXCHANGE_NAME")
+    )
+      .trim()
+      .toLowerCase();
+    const testnetNow =
+      resolvedExchange !== "tabdeal" &&
+      !["false", "0", "no", "off"].includes(
+        (settingsMap.exchange_testnet || conf("EXCHANGE_TESTNET") || "true")
+          .trim()
+          .toLowerCase(),
+      );
 
     const topEmp = lb[0];
     const reportText =
