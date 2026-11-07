@@ -176,7 +176,7 @@ GitHub → Settings → Secrets and variables → Actions سکرتی به نام
 `agentos.report_deliveries` می‌سازد (کلید روز بر اساس `Asia/Tehran`).
 اگر چند کرون/دپلوی هم‌زمان اجرا شوند، فقط اولین ارسال انجام می‌شود و
 بقی `skipped` می‌شوند. ارسال ناموفق یاگیرکردهٔ قدیمی قابل تلاش مجدد است.
- migration افزودنی: `supabase/migrations/0001_report_deliveries.sql`.
+Migration افزودنی: `supabase/migrations/0001_report_deliveries.sql`.
 
 `npm run build` دیگر هنگام بیلد، پیام تلگرام/کارت HITL ارسال نمی‌کند؛
 اسکریپت `scripts/coo-startup-once.ts` فقط در صورت اجرای دستی جداگانه عمل می‌کند.
