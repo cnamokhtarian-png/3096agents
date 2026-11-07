@@ -718,7 +718,9 @@ async function main() {
           ? "⛔ این کار هنوز آماده اجرای واقعی نیست:\n• کلید API صرافی کامل ست نشده است\n   ↳ کلیدها را از پنل (کارت صرافی) کامل کنید."
           : !balanceProbe.tradingOn
             ? "⛔ این کار هنوز آماده اجرای واقعی نیست:\n• قفل ایمنی معامله بسته است (AGENT_TRADING_ENABLED=false)\n   ↳ از کارت «صرافی و روشن‌کردن کار واقعی» در پنل، قفل ارسال واقعی را باز کنید."
-            : `✅ آماده اجرا: با تأیید شما سفارش واقعی روی ${balanceProbe.exchangeName} (${balanceProbe.testnet ? "Testnet" : "Mainnet"}) ارسال می‌شود.`;
+            : best.positionUsdt === null
+              ? "⛔ این کارت فعلاً قابل اجرا نیست:\n• مبلغ سفارش تعیین نشده چون موجودی آزاد واقعی USDT در صرافی صفر/ناچیز است یا خوانده نشد\n   ↳ حساب صرافی را شارژ کنید؛ چرخهٔ بعدی مبلغ را از موجودی واقعی محاسبه می‌کند."
+              : `✅ آماده اجرا: با تأیید شما سفارش واقعی روی ${balanceProbe.exchangeName} (${balanceProbe.testnet ? "Testnet" : "Mainnet"}) ارسال می‌شود.`;
 
         const aiReason =
           (await askGemini(
