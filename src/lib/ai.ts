@@ -135,7 +135,9 @@ export async function generateGeminiText(
       }
 
       const json: any = await res.json().catch(() => ({}));
-      const text = json?.candidates?.[0]?.content?.parts
+      const candidate = json?.candidates?.[0];
+      const finishReason = String(candidate?.finishReason || "").toUpperCase();
+      const text = candidate?.content?.parts
         ?.map((p: any) => (typeof p?.text === "string" ? p.text : ""))
         .filter(Boolean)
         .join("\n")
@@ -143,6 +145,11 @@ export async function generateGeminiText(
 
       if (!text) {
         lastError = `پاسخ مدل ${model} خالی بود`;
+        continue;
+      }
+      // خروجی بریده‌شده (MAX_TOKENS) یا مسدودشده نباید به‌عنوان گزارش کامل ارسال شود.
+      if (finishReason && finishReason !== "STOP") {
+        lastError = `پاسخ مدل ${model} کامل نبود (${finishReason})`;
         continue;
       }
 

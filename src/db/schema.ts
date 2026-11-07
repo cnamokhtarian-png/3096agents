@@ -268,6 +268,19 @@ export const cronRuns = agentos.table("cron_runs", {
   finishedAt: timestamp("finished_at", { withTimezone: true }),
 });
 
+export const reportDeliveries = agentos.table("report_deliveries", {
+  id: serial("id").primaryKey(),
+  deliveryKey: text("delivery_key").notNull().unique(),
+  chatId: text("chat_id").notNull(),
+  agentId: integer("agent_id"),
+  scope: text("scope").notNull().default("daily"),
+  status: text("status").notNull().default("sending"),
+  telegramMessageId: bigint("telegram_message_id", { mode: "number" }),
+  error: text("error").notNull().default(""),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+  sentAt: timestamp("sent_at", { withTimezone: true }),
+});
+
 export const systemEvents = agentos.table("system_events", {
   id: bigserial("id", { mode: "number" }).primaryKey(),
   level: text("level").notNull().default("info"),

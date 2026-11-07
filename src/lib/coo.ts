@@ -29,6 +29,8 @@ import { scanBountyFeeds } from "@/lib/bounty";
 import { createJob } from "@/lib/jobs";
 import { escapeHtml, notifyAdmin, telegramConfigured } from "@/lib/telegram";
 import { activeGeminiModel, generateGeminiText, geminiConfigured } from "@/lib/ai";
+import { claimReportDelivery, markReportFailed, markReportSent } from "@/lib/report-delivery";
+import { cooReportKey } from "@/lib/report-time";
 
 export const COO_NAME = "RNAI · مدیر ارشد اجرایی (COO)";
 
@@ -238,6 +240,22 @@ async function logCooActivity(input: {
   });
 }
 
+const CONFIG_BLOCK_CODES = new Set([
+  "exchange_trading_disabled",
+  "worker_not_configured",
+  "not_configured",
+  "retry_blocked",
+  "missing_api_key",
+  "missing_api_secret",
+  "trading_flag_off",
+]);
+
+function isConfigBlockLog(meta: unknown): boolean {
+  if (!meta || typeof meta !== "object") return false;
+  const m = meta as Record<string, unknown>;
+  return m.needsConfig === true || CONFIG_BLOCK_CODES.has(String(m.code || ""));
+}
+
 /**
  * ۱. ابلاغ رسمی شرح وظایف، پروتکل HITL و همگام‌سازی شمارنده‌های واقعی ناوگان.
  */
@@ -271,23 +289,19 @@ export async function charterFleetProtocols(options?: { logEachAgent?: boolean }
         .reduce((sum, t) => sum + (Number(t.amountUsdt) || 0), 0)
         .toFixed(2),
     );
-    const logSuccesses = allLogs.filter(
-      (l) =>
-        (l.agentId === ag.id || l.agentName === ag.name) &&
-        l.status === "success",
-    ).length;
     const logErrors = allLogs.filter(
       (l) =>
         (l.agentId === ag.id || l.agentName === ag.name) &&
-        (l.status === "error" || l.status === "failed"),
+        (l.status === "error" || l.status === "failed") &&
+        !isConfigBlockLog(l.meta),
     ).length;
 
-    const syncedSuccessCount = Math.max(
-      Number(ag.successCount) || 0,
-      confirmedForAgent.length,
-      logSuccesses,
-    );
-    const syncedErrorCount = Math.max(Number(ag.errorCount) || 0, logErrors);
+    // شمارنده‌ها از لاگ‌های اطلاعاتی/گزارش‌ها باد نمی‌کنند. تسک‌های
+    // تأییدشده حفظ می‌شوند، موفقیت حداکثر برابر تسک/درآمد تأییدشده است و
+    // خطاهای پیکربندی (needs_config) خطای اجرایی محسوب نمی‌شوند.
+    const syncedTasksCompleted = Math.max(Number(ag.tasksCompleted) || 0, confirmedForAgent.length);
+    const syncedSuccessCount = Math.max(confirmedForAgent.length, syncedTasksCompleted);
+    const syncedErrorCount = logErrors;
 
     await db
       .update(agents)
@@ -300,6 +314,7 @@ export async function charterFleetProtocols(options?: { logEachAgent?: boolean }
         currentFocus: spec?.mandateSummary || ag.currentFocus,
         role: spec?.roleDescription || ag.role,
         earnedUsdt: realEarned,
+        tasksCompleted: syncedTasksCompleted,
         successCount: syncedSuccessCount,
         errorCount: syncedErrorCount,
         lastActiveAt: new Date(),
@@ -1156,7 +1171,9 @@ export async function buildCooExecutiveSummary(): Promise<CooExecutiveSummary> {
   }
 
   const errorLogs24h = recentLogs24h.filter(
-    (l) => l.status === "error" || l.status === "failed",
+    (l) =>
+      (l.status === "error" || l.status === "failed") &&
+      !isConfigBlockLog(l.meta),
   );
   if (errorLogs24h.length > 0) {
     const latestErr = errorLogs24h[0];
@@ -1335,6 +1352,8 @@ export async function buildCooExecutiveSummary(): Promise<CooExecutiveSummary> {
  */
 export async function generateCooExecutiveReport(options?: {
   sendTelegram?: boolean;
+  /** اگر ست شود، ارسال تلگرام همان روز فقط یک‌بار انجام می‌شود (کرون روزانه). */
+  dedupeDaily?: boolean;
 }) {
   const summary = await buildCooExecutiveSummary();
 
@@ -1365,15 +1384,35 @@ export async function generateCooExecutiveReport(options?: {
     }),
   ]);
 
-  let telegramResult: { ok: boolean; messageId?: number; error?: string } | null =
+  let telegramResult: { ok: boolean; messageId?: number; error?: string; skipped?: boolean } | null =
     null;
-  if (options?.sendTelegram !== false && telegramConfigured() && ENV.telegramAdminChat()) {
-    const res = await notifyAdmin(summary.telegramHtml);
-    telegramResult = {
-      ok: res.ok,
-      messageId: res.ok ? (res as any).result?.message_id : undefined,
-      error: res.ok ? undefined : res.description || res.error,
-    };
+  const chatId = ENV.telegramAdminChat();
+  if (options?.sendTelegram !== false && telegramConfigured() && chatId) {
+    let claimId: number | null = null;
+    if (options?.dedupeDaily) {
+      const claim = await claimReportDelivery({
+        deliveryKey: cooReportKey(chatId),
+        chatId,
+        scope: "coo",
+      });
+      if (!claim.claimed) {
+        telegramResult = { ok: true, skipped: true };
+      } else {
+        claimId = claim.id;
+      }
+    }
+    if (claimId !== null || !options?.dedupeDaily) {
+      const res = await notifyAdmin(summary.telegramHtml);
+      telegramResult = {
+        ok: res.ok,
+        messageId: res.ok ? (res as any).result?.message_id : undefined,
+        error: res.ok ? undefined : res.description || res.error,
+      };
+      if (claimId !== null) {
+        if (res.ok) await markReportSent(claimId, (res as any).result?.message_id);
+        else await markReportFailed(claimId, res.description || res.error || "telegram_error");
+      }
+    }
   }
 
   return {

@@ -15,6 +15,8 @@ import { ConfigError, ENV } from "@/lib/env";
 import { ExchangeError, placeRealOrder } from "@/lib/exchange";
 import { confirmDeposit, ingestExternalIncome, recordAgentError } from "@/lib/agent-execution";
 import { generateAgentReport } from "@/lib/report";
+import { claimReportDelivery, markReportFailed, markReportSent } from "@/lib/report-delivery";
+import { dailyReportKey } from "@/lib/report-time";
 import {
   editTelegramMessage,
   notifyAdmin,
@@ -317,14 +319,25 @@ async function markNeedsConfig(job: JobRecord, message: string, code = "not_conf
     .update(agentJobs)
     .set({ status: "needs_config", error: message, finishedAt: new Date() })
     .where(eq(agentJobs.id, job.id));
-  await recordAgentError({
+  await logActivity({
+    agentId: job.agentId,
     agentName: job.agentName,
     action: `این کار نیاز به تنظیمات دارد: ${job.title}`,
+    status: "blocked",
     detail: `${message} • پس از تکمیل کلیدها/تنظیمات، «تلاش دوباره» را بزنید.`,
-    source: "job",
     jobId: job.id,
+    source: "job",
     meta: { code, kind: job.kind, needsConfig: true },
   });
+  await db
+    .insert(systemEvents)
+    .values({
+      level: "warn",
+      scope: "jobs",
+      message: `کار #${job.id} نیازمند تنظیمات است: ${message}`,
+      meta: { jobId: job.id, code, kind: job.kind, needsConfig: true },
+    })
+    .catch(() => {});
   return {
     ok: false as const,
     error: message,
@@ -744,32 +757,46 @@ export async function syncTelegramApproval(
 
 /** تلاش دوباره برای کار ناموفق. */
 export async function retryJob(id: number, actor: string) {
+  const current = await getJob(id);
+  if (!current) return { ok: false as const, error: "کار پیدا نشد" };
+  if (!["failed", "expired", "needs_config"].includes(current.status)) {
+    return {
+      ok: false as const,
+      error: `این کار در وضعیت «${statusLabel(current.status)}» است؛ فقط کارهای ناموفق/نیازمند تنظیمات/منقضی قابل تلاش دوباره هستند.`,
+      job: current,
+    };
+  }
+
+  // پیش از تغییر وضعیت، پیش‌بررسی کن؛ در غیر این صورت status=approved
+  // باعث می‌شد approvalVerdict خودِ تلاش دوباره را رد کند (retry_blocked).
+  const preflight = await preflightJobKind(
+    current.kind as JobKind,
+    (current.payload || {}) as Record<string, any>,
+  );
+  if (!preflight.ready) {
+    await markNeedsConfig(current, preflight.reason, "retry_blocked");
+    return {
+      ok: false as const,
+      error: preflight.reason,
+      code: "not_ready",
+      blockers: preflight.blockers,
+      job: await getJob(id),
+    };
+  }
+
   const [job] = await db
     .update(agentJobs)
     .set({ status: "approved", error: "", finishedAt: null, approvedBy: actor, approvedAt: new Date() })
     .where(and(eq(agentJobs.id, id), inArray(agentJobs.status, ["failed", "expired", "needs_config"])))
     .returning();
   if (!job) {
-    const current = await getJob(id);
+    const raced = await getJob(id);
     return {
       ok: false as const,
-      error: current
-        ? `این کار در وضعیت «${statusLabel(current.status)}» است؛ فقط کارهای ناموفق/نیازمند تنظیمات/منقضی قابل تلاش دوباره هستند.`
+      error: raced
+        ? `این کار در وضعیت «${statusLabel(raced.status)}» است؛ فقط کارهای ناموفق/نیازمند تنظیمات/منقضی قابل تلاش دوباره هستند.`
         : "کار پیدا نشد",
-      job: current,
-    };
-  }
-
-  // پیش از تلاش دوباره بررسی کن که علت قبلی رفع شده باشد
-  const verdict = await approvalVerdict(job);
-  if (!verdict.allowed) {
-    await markNeedsConfig(job, verdict.message, "retry_blocked");
-    return {
-      ok: false as const,
-      error: verdict.message,
-      code: "not_ready",
-      blockers: verdict.blockers,
-      job: await getJob(id),
+      job: raced,
     };
   }
 
@@ -849,40 +876,64 @@ export async function remindPendingApprovals(olderThanMinutes = 45, windowMinute
 /** تولید گزارش روزانه‌ی همه‌ی کارمندان و ارسال به تلگرام (کرون). */
 export async function sendDailyReports() {
   const all = await db.select().from(agents);
+  const chatId = ENV.telegramAdminChat();
   let sent = 0;
+  let skipped = 0;
   const errors: string[] = [];
+
+  if (!telegramConfigured() || !chatId) {
+    return { sent, skipped, agents: all.length, errors: ["telegram_not_configured"] };
+  }
+
   for (const agent of all) {
     if (agent.status !== "active") continue;
+    const deliveryKey = dailyReportKey(agent.id, chatId);
+    const claim = await claimReportDelivery({
+      deliveryKey,
+      chatId,
+      agentId: agent.id,
+      scope: "daily",
+    });
+    if (!claim.claimed) {
+      skipped++;
+      continue;
+    }
     try {
       const report = await generateAgentReport(agent.id, { useAi: true });
       if (!report.ok) {
+        await markReportFailed(claim.id, report.error || "report_failed");
         errors.push(`${agent.name}: ${report.error}`);
         continue;
       }
-      if (telegramConfigured() && ENV.telegramAdminChat()) {
-        const res = await notifyAdmin(
-          `<b>📊 گزارش روزانه ${escapeHtml(agent.name)}</b>\n\n${escapeHtml(report.text)}`
-        );
-        if (res.ok) sent++;
-        else errors.push(`${agent.name}: ${(res as any).description || (res as any).error}`);
+      const res = await notifyAdmin(
+        `<b>📊 گزارش روزانه ${escapeHtml(agent.name)}</b>\n\n${escapeHtml(report.text)}`
+      );
+      if (!res.ok) {
+        const message = (res as any).description || (res as any).error || "telegram_error";
+        await markReportFailed(claim.id, message);
+        errors.push(`${agent.name}: ${message}`);
+        continue;
       }
+      await markReportSent(claim.id, (res as any).result?.message_id);
+      sent++;
       await db.insert(agentJobs).values({
         agentId: agent.id,
         agentName: agent.name,
         kind: "status_report",
         title: "گزارش روزانه خودکار",
         detail: "ساخته‌شده توسط Vercel Cron",
-        payload: {},
+        payload: { deliveryKey },
         status: "succeeded",
         requiresApproval: false,
         result: { report: report.text, source: report.source },
         finishedAt: new Date(),
       });
     } catch (e: any) {
+      await markReportFailed(claim.id, e?.message || String(e)).catch(() => {});
       errors.push(`${agent.name}: ${e?.message || e}`);
     }
   }
-  return { sent, agents: all.length, errors };
+  return { sent, skipped, agents: all.length, errors };
 }
 
 export async function expireStaleApprovals(olderThanHours = 72) {

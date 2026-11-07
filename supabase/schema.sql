@@ -272,6 +272,25 @@ CREATE INDEX IF NOT EXISTS system_events_created_idx
   ON agentos.system_events (created_at DESC);
 
 -- -------------------------------------------------------------------------
+-- ۶.۵) ضدتکراری ارسال گزارش‌های تلگرام (روزانه / COO)
+-- -------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS agentos.report_deliveries (
+  id SERIAL PRIMARY KEY,
+  delivery_key TEXT NOT NULL UNIQUE,
+  chat_id TEXT NOT NULL,
+  agent_id INTEGER,
+  scope TEXT NOT NULL DEFAULT 'daily',
+  status TEXT NOT NULL DEFAULT 'sending',
+  telegram_message_id BIGINT,
+  error TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  sent_at TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS report_deliveries_chat_idx
+  ON agentos.report_deliveries (chat_id, created_at DESC);
+
+-- -------------------------------------------------------------------------
 -- ۷) توابع دیتابیس (RPC)
 -- -------------------------------------------------------------------------
 

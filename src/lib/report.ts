@@ -12,6 +12,7 @@ import { exchangeStatus } from "@/lib/exchange";
 import { getMarketOverview } from "@/lib/market";
 import { getMasterWallet } from "@/lib/seed";
 import { generateGeminiText } from "@/lib/ai";
+import { startOfTehranDay } from "@/lib/report-time";
 
 /**
  * گزارش وضعیت کارمند — کاملاً بر پایه‌ی داده‌های واقعی دیتابیس.
@@ -22,9 +23,7 @@ import { generateGeminiText } from "@/lib/ai";
 export type AgentFacts = Awaited<ReturnType<typeof buildAgentFacts>>;
 
 function startOfToday() {
-  const d = new Date();
-  d.setHours(0, 0, 0, 0);
-  return d;
+  return startOfTehranDay();
 }
 
 export async function buildAgentFacts(agentId: number) {
@@ -33,7 +32,7 @@ export async function buildAgentFacts(agentId: number) {
   if (!agent) return null;
 
   const today = startOfToday();
-  const [activity, jobs, legacyLogs, txs, wallet, market, daily] = await Promise.all([
+  const [activity, jobs, legacyLogs, txs, wallet, market, daily, incomeAgg, jobAgg, failedAgg] = await Promise.all([
     db
       .select()
       .from(agentActivityLogs)
@@ -67,18 +66,38 @@ export async function buildAgentFacts(agentId: number) {
       })
       .from(agentActivityLogs)
       .where(and(eq(agentActivityLogs.agentName, agent.name), gte(agentActivityLogs.createdAt, today))),
+    db
+      .select({
+        confirmed: sql<number>`COALESCE(SUM(CASE WHEN ${transactions.status} = 'confirmed' AND ${transactions.amountUsdt} > 0 THEN ${transactions.amountUsdt} ELSE 0 END), 0)`,
+        pending: sql<number>`COALESCE(SUM(CASE WHEN ${transactions.status} = 'pending_verification' THEN ${transactions.amountUsdt} ELSE 0 END), 0)`,
+      })
+      .from(transactions)
+      .where(eq(transactions.agentName, agent.name)),
+    db
+      .select({
+        status: agentJobs.status,
+        n: sql<number>`COUNT(*)`,
+      })
+      .from(agentJobs)
+      .where(eq(agentJobs.agentId, agent.id))
+      .groupBy(agentJobs.status),
+    db
+      .select({ n: sql<number>`COUNT(*)` })
+      .from(agentActivityLogs)
+      .where(
+        and(
+          eq(agentActivityLogs.agentName, agent.name),
+          eq(agentActivityLogs.status, "failed"),
+          gte(agentActivityLogs.createdAt, today),
+        ),
+      ),
   ]);
 
-  const confirmedIncome = txs
-    .filter((t) => t.status === "confirmed" && Number(t.amountUsdt) > 0)
-    .reduce((s, t) => s + Number(t.amountUsdt), 0);
-  const pendingIncome = txs
-    .filter((t) => t.status === "pending_verification")
-    .reduce((s, t) => s + Number(t.amountUsdt), 0);
+  const confirmedIncome = Number(incomeAgg[0]?.confirmed || 0);
+  const pendingIncome = Number(incomeAgg[0]?.pending || 0);
+  const jobCounts = Object.fromEntries(jobAgg.map((r) => [r.status, Number(r.n)]));
   const pendingJobs = jobs.filter((j) => ["queued", "awaiting_approval", "approved", "running"].includes(j.status));
-  const failedToday = activity.filter(
-    (a) => a.status === "failed" && a.createdAt && new Date(a.createdAt).getTime() >= today.getTime()
-  );
+  const failedTodayCount = Number(failedAgg[0]?.n || 0);
 
   const goalTarget = Number(agent.goalTargetUsdt) || 0;
   const goalProgress = goalTarget > 0 ? Math.min(100, Math.round((Number(agent.earnedUsdt) / goalTarget) * 100)) : null;
@@ -109,16 +128,19 @@ export async function buildAgentFacts(agentId: number) {
     today: {
       earnedUsdt: Number(daily[0]?.earnedToday || 0),
       runs: Number(daily[0]?.runsToday || 0),
-      failed: failedToday.length,
+      failed: failedTodayCount,
     },
     wallet,
     income: { confirmed: confirmedIncome, pending: pendingIncome },
     jobs: {
-      total: jobs.length,
-      pending: pendingJobs.length,
-      awaitingApproval: jobs.filter((j) => j.status === "awaiting_approval").length,
-      succeeded: jobs.filter((j) => j.status === "succeeded").length,
-      failed: jobs.filter((j) => j.status === "failed").length,
+      total: Object.values(jobCounts).reduce((s, n) => s + n, 0),
+      pending: ["queued", "awaiting_approval", "approved", "running"].reduce(
+        (s, status) => s + (jobCounts[status] || 0),
+        0,
+      ),
+      awaitingApproval: jobCounts.awaiting_approval || 0,
+      succeeded: jobCounts.succeeded || 0,
+      failed: jobCounts.failed || 0,
       recent: pendingJobs.slice(0, 5),
     },
     activity: activity.slice(0, 12).map((a) => ({

@@ -3,10 +3,11 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build && node --experimental-strip-types scripts/coo-startup-once.ts",
+    "build": "next build",
     "start": "next start",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
+    "test": "node --experimental-strip-types --test tests/*.test.mts",
     "verify:config": "node --experimental-strip-types scripts/verify-config.ts",
     "verify:admin": "node --experimental-strip-types scripts/verify-admin-password.ts"
   },

@@ -25,9 +25,9 @@ import {
   approveJob,
   getJob,
   rejectJob,
+  sendDailyReports,
   syncTelegramApproval,
 } from "@/lib/jobs";
-import { generateAgentReport } from "@/lib/report";
 import { conf } from "@/lib/config";
 import {
   buildCooExecutiveSummary,
@@ -203,20 +203,12 @@ async function handleAdminCommand(text: string, chatId: string | number) {
   }
 
   if (cmd === "/report") {
-    const list = await db.select().from(agents);
+    const result = await sendDailyReports();
     await sendTelegramMessage(
       chatId,
-      `⏳ در حال ساخت ${list.length} گزارش از داده واقعی...`,
+      `📊 گزارش روزانه: ${result.sent} ارسال شد، ${result.skipped} مورد تکراری امروز رد شد.` +
+        (result.errors.length ? `\n⚠️ ${escapeHtml(result.errors.join(" • "))}` : ""),
     );
-    for (const a of list) {
-      const rep = await generateAgentReport(a.id, { useAi: true });
-      if (!rep.ok) continue;
-      const lines = rep.text.split("\n");
-      await sendTelegramMessage(
-        chatId,
-        `<b>${escapeHtml(lines[0])}</b>\n${escapeHtml(lines.slice(1).join("\n"))}`,
-      );
-    }
     return true;
   }
 

@@ -132,7 +132,7 @@ async function run(req: NextRequest, jobParam: string) {
     if (job === "reports") {
       const [reports, coo] = await Promise.all([
         sendDailyReports(),
-        generateCooExecutiveReport({ sendTelegram: true }),
+        generateCooExecutiveReport({ sendTelegram: true, dedupeDaily: true }),
       ]);
       steps.reports = reports;
       steps.cooReport = {
