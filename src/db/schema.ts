@@ -121,6 +121,115 @@ export const settings = agentos.table("settings", {
 });
 
 // ===========================================================================
+// 🪙 میز کار ایجنت تریدر (A1 - آریا)
+// ===========================================================================
+
+// پیشنهادهای معامله (قبل از تأیید انسانی)
+export const tradeSignals = agentos.table("trade_signals", {
+  id: serial("id").primaryKey(),
+  agentId: integer("agent_id").notNull(),
+  agentName: text("agent_name").notNull(),
+  symbol: text("symbol").notNull().default("BTC/USDT"),
+  side: text("side").notNull(), // LONG | SHORT
+  entryPrice: real("entry_price").notNull(),
+  takeProfit: real("take_profit").notNull(),
+  stopLoss: real("stop_loss").notNull(),
+  targetPct: real("target_pct").notNull().default(0),
+  stopPct: real("stop_pct").notNull().default(0),
+  riskReward: real("risk_reward").notNull().default(0),
+  leverage: integer("leverage").notNull().default(3),
+  positionUsdt: real("position_usdt").notNull().default(500),
+  estimatedProfitUsdt: real("estimated_profit_usdt").notNull().default(0),
+  estimatedHoursMin: integer("estimated_hours_min").notNull().default(1),
+  estimatedHoursMax: integer("estimated_hours_max").notNull().default(6),
+  confidence: real("confidence").notNull().default(0),
+  rsi: real("rsi").notNull().default(0),
+  macdHist: real("macd_hist").notNull().default(0),
+  ma20: real("ma20").notNull().default(0),
+  ma50: real("ma50").notNull().default(0),
+  support: real("support").notNull().default(0),
+  resistance: real("resistance").notNull().default(0),
+  fearGreed: integer("fear_greed").notNull().default(50),
+  orderbookImbalance: real("orderbook_imbalance").notNull().default(0),
+  whaleFlowUsdt: real("whale_flow_usdt").notNull().default(0),
+  sentiment: real("sentiment").notNull().default(0),
+  volatilityPct: real("volatility_pct").notNull().default(0),
+  dataSource: text("data_source").notNull().default("fallback"),
+  dataSources: text("data_sources").notNull().default("[]"),
+  analysisReason: text("analysis_reason").notNull().default(""),
+  riskNotes: text("risk_notes").notNull().default(""),
+  telegramMessage: text("telegram_message").notNull().default(""),
+  status: text("status").notNull().default("pending"), // pending|approved|rejected|expired
+  decidedBy: text("decided_by").notNull().default(""),
+  decidedAt: timestamp("decided_at"),
+  expiresAt: timestamp("expires_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+// پوزیشنهای باز/بسته با PnL لحظهای
+export const tradePositions = agentos.table("trade_positions", {
+  id: serial("id").primaryKey(),
+  signalId: integer("signal_id"),
+  agentId: integer("agent_id").notNull(),
+  agentName: text("agent_name").notNull(),
+  symbol: text("symbol").notNull(),
+  side: text("side").notNull(),
+  entryPrice: real("entry_price").notNull(),
+  currentPrice: real("current_price").notNull().default(0),
+  takeProfit: real("take_profit").notNull(),
+  stopLoss: real("stop_loss").notNull(),
+  sizeUsdt: real("size_usdt").notNull(),
+  leverage: integer("leverage").notNull().default(3),
+  quantity: real("quantity").notNull().default(0),
+  unrealizedPnl: real("unrealized_pnl").notNull().default(0),
+  realizedPnl: real("realized_pnl").notNull().default(0),
+  pnlPct: real("pnl_pct").notNull().default(0),
+  mode: text("mode").notNull().default("paper"), // paper | live
+  status: text("status").notNull().default("open"), // open | closed
+  closeReason: text("close_reason").notNull().default(""),
+  exchangeOrderId: text("exchange_order_id").notNull().default(""),
+  openedAt: timestamp("opened_at").defaultNow(),
+  closedAt: timestamp("closed_at"),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// دفترچه خاطرات / لاگ تحلیل ایجنت (Brain Dump)
+export const agentJournal = agentos.table("agent_journal", {
+  id: serial("id").primaryKey(),
+  agentId: integer("agent_id").notNull(),
+  agentName: text("agent_name").notNull(),
+  kind: text("kind").notNull().default("scan"), // scan|skip|signal|trade|close|review|system
+  mood: text("mood").notNull().default("focused"),
+  text: text("text").notNull(),
+  meta: text("meta").notNull().default("{}"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+// کش اسنپشات بازار (برای نمایشگر زنده و جلوگیری از تماس مکرر با API)
+export const marketSnapshots = agentos.table("market_snapshots", {
+  id: serial("id").primaryKey(),
+  symbol: text("symbol").notNull(),
+  price: real("price").notNull(),
+  rsi: real("rsi").notNull().default(0),
+  macdHist: real("macd_hist").notNull().default(0),
+  ma20: real("ma20").notNull().default(0),
+  ma50: real("ma50").notNull().default(0),
+  support: real("support").notNull().default(0),
+  resistance: real("resistance").notNull().default(0),
+  fearGreed: integer("fear_greed").notNull().default(50),
+  orderbookImbalance: real("orderbook_imbalance").notNull().default(0),
+  whaleFlowUsdt: real("whale_flow_usdt").notNull().default(0),
+  sentiment: real("sentiment").notNull().default(0),
+  volumeUsdt: real("volume_usdt").notNull().default(0),
+  volatilityPct: real("volatility_pct").notNull().default(0),
+  source: text("source").notNull().default("fallback"),
+  sources: text("sources").notNull().default("[]"),
+  notes: text("notes").notNull().default("[]"),
+  candles: integer("candles").notNull().default(0),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+// ===========================================================================
 // 🏆 لیگ کارمندان (Agent Leaderboard / Employee of the Month)
 // ===========================================================================
 

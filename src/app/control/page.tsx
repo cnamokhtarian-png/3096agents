@@ -784,6 +784,12 @@ export default function Control() {
             >
               📩 پیام تلگرام
             </button>
+            <a
+              href="/agents/crypto-arya"
+              className="bg-slate-900 hover:bg-slate-700 text-white px-4 py-2 rounded-full font-bold text-sm"
+            >
+              🖥 میز کار آریا (A1)
+            </a>
           </div>
         </header>
 
@@ -1581,6 +1587,12 @@ export default function Control() {
                     <p className="text-slate-300 text-sm mt-1">
                       {cryptoEmployee.strategy}
                     </p>
+                    <a
+                      href="/agents/crypto-arya"
+                      className="inline-block bg-amber-400 hover:bg-amber-300 text-black font-black text-xs px-4 py-2 rounded-xl mt-3"
+                    >
+                      🖥 ورود به میز کار اختصاصی آریا (A1) ←
+                    </a>
                   </div>
                   <div className="bg-white/10 rounded-2xl p-4 text-left">
                     <p className="text-xs text-slate-300">
@@ -1866,6 +1878,15 @@ export default function Control() {
                       >
                         🔌 API
                       </button>
+                      {ag.specialty === "crypto" && (
+                        <a
+                          href="/agents/crypto-arya"
+                          className="px-3 bg-amber-400 text-black grid place-items-center rounded-xl text-xs font-bold"
+                          title="میز کار اختصاصی آریا"
+                        >
+                          🖥
+                        </a>
+                      )}
                       <button
                         onClick={() => deleteAgent(ag.id)}
                         className="px-2.5 bg-red-50 text-red-600 rounded-xl text-xs"

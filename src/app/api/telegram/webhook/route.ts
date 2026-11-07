@@ -5,6 +5,7 @@ import { eq } from "drizzle-orm";
 import { ensureSeed, getMasterWallet } from "@/lib/seed";
 import { sendTelegramMessage } from "@/lib/telegram";
 import { recordScoreEvent } from "@/lib/leaderboard";
+import { decideSignal } from "@/lib/trader";
 
 export async function POST(req: NextRequest) {
   await ensureSeed();
@@ -26,6 +27,35 @@ export async function POST(req: NextRequest) {
     const approved = action === "approve";
     const rejected = action === "reject";
     let leagueNote = "";
+
+    // ۱-الف) دکمههای شیشهای «پیشنهاد معامله آریا (A1)» → HITL تریدر
+    if (action === "trade_approve" || action === "trade_reject") {
+      const by = `تلگرام @${b.callback_query.from?.username || "admin"}`;
+      const decision = await decideSignal(
+        id,
+        action === "trade_approve" ? "approve" : "reject",
+        by
+      ).catch((e) => ({ ok: false, error: String(e) }));
+      await db.insert(agentLogs).values({
+        agent: "آریا (A1) - تریدر رمزارز",
+        action: action === "trade_approve" ? "✅ معامله از تلگرام تأیید شد" : "❌ پیشنهاد معامله رد شد",
+        status: "success",
+        detail: `${data} • ${by} • ${decision.ok ? "انجام شد" : (decision as any).error || "انجام نشد"}`,
+        durationMs: 220,
+      });
+      return NextResponse.json({
+        ok: true,
+        method: "answerCallbackQuery",
+        text:
+          action === "trade_approve"
+            ? decision.ok
+              ? "✅ معامله تأیید و پوزیشن باز شد"
+              : "⚠️ اجرای معامله انجام نشد"
+            : "❌ پیشنهاد رد شد",
+        callback_data: data,
+        decision,
+      });
+    }
 
     if ((approved || rejected) && id > 0) {
       const [task] = await db.select().from(tasks).where(eq(tasks.id, id)).limit(1);

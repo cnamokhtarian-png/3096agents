@@ -9,6 +9,10 @@
   },
   "crons": [
     {
+      "path": "/api/company/tick",
+      "schedule": "0 6 * * *"
+    },
+    {
       "path": "/api/leaderboard/cron",
       "schedule": "0 0 1 * *"
     }

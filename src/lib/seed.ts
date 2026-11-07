@@ -11,6 +11,9 @@ import {
   settings,
   agentScoreEvents,
   agentMonthlyAwards,
+  tradeSignals,
+  tradePositions,
+  agentJournal,
 } from "@/db/schema";
 import { createHash, createHmac } from "crypto";
 import { eq } from "drizzle-orm";
@@ -23,6 +26,7 @@ import {
   shiftPeriod,
   type Outcome,
 } from "@/lib/leaderboard";
+import { TRADER_DEFAULTS, formatSignalMessage } from "@/lib/trader";
 
 export const hashPw = (p: string) =>
   createHash("sha256").update(p).digest("hex");
@@ -525,6 +529,12 @@ export async function ensureSeed() {
       // اگر مایگریشن لیگ هنوز اعمال نشده، بقیهٔ اپ سالم می‌ماند.
       console.error("leaderboard seed error:", e);
     }
+    try {
+      await ensureTraderSeed();
+    } catch (e) {
+      // اگر مایگریشن میز کار هنوز اعمال نشده، بقیهٔ اپ سالم میماند.
+      console.error("trader seed error:", e);
+    }
     seeded = true;
   } catch (e) {
     console.error("seed error:", e);
@@ -678,5 +688,181 @@ async function ensureLeaderboardSeed() {
         })
         .onConflictDoNothing();
     }
+  }
+}
+
+/**
+ * 🪙 دادهٔ نمونهٔ «میز کار آریا (A1)» — تنظیمات، کارنامه، خاطرات و یک
+ * پیشنهاد معاملهٔ منتظر تأیید. کاملاً idempotent و با برچسب «نمونه» مشخص است.
+ */
+async function ensureTraderSeed() {
+  const defaults: [string, string][] = [
+    ["trader_enabled", "true"],
+    ["trader_symbol", TRADER_DEFAULTS.symbol],
+    ["trader_capital_usdt", String(TRADER_DEFAULTS.capitalUsdt)],
+    ["trader_max_position_usdt", String(TRADER_DEFAULTS.maxPositionUsdt)],
+    ["trader_max_leverage", String(TRADER_DEFAULTS.maxLeverage)],
+    ["trader_min_rr", String(TRADER_DEFAULTS.minRiskReward)],
+    ["trader_min_confidence", String(TRADER_DEFAULTS.minConfidence)],
+    ["trader_max_risk_usdt", String(TRADER_DEFAULTS.maxRiskUsdt)],
+    ["trader_min_fear_greed", String(TRADER_DEFAULTS.minFearGreed)],
+    ["trader_max_fear_greed", String(TRADER_DEFAULTS.maxFearGreed)],
+    ["trader_max_volatility_pct", String(TRADER_DEFAULTS.maxVolatilityPct)],
+    ["trader_auto_close", "true"],
+    ["trader_max_hold_hours", String(TRADER_DEFAULTS.maxHoldHours)],
+    ["trader_max_open_positions", String(TRADER_DEFAULTS.maxOpenPositions)],
+    ["trader_mode", "paper"],
+  ];
+  await db.insert(settings).values(defaults.map(([key, value]) => ({ key, value }))).onConflictDoNothing();
+
+  const [agent] = await db.select().from(agents).limit(1);
+  const agentId = agent?.id || 1;
+  const agentName = agent?.name || "آریا کریپتو (کارمند تخصصی رمزارز)";
+  const now = Date.now();
+  const day = 24 * 60 * 60 * 1000;
+
+  const existingJournal = await db.select().from(agentJournal).limit(1);
+  if (existingJournal.length === 0) {
+    await db.insert(agentJournal).values([
+      {
+        agentId,
+        agentName,
+        kind: "skip",
+        mood: "cautious",
+        text: "ساعت ۱۲:۳۰ بازار بیتکوین رصد شد. بهدلیل نوسان شدید اخبار و جهش شاخص ترس و طمع، از ورود به معاملهٔ جدید صرفنظر کردم؛ سرمایه حفظ شد.",
+        meta: JSON.stringify({ seed: true, fearGreed: 84 }),
+        createdAt: new Date(now - 1 * day),
+      },
+      {
+        agentId,
+        agentName,
+        kind: "scan",
+        mood: "focused",
+        text: "دفتر سفارشات Binance بررسی شد: عمق سمت خرید ۱۲٪ بیشتر از فروش است و سه سفارش بالای ۱۰۰ هزار تتر دیده شد. RSI چهارساعته روی ۵۴ و MACD مثبت است.",
+        meta: JSON.stringify({ seed: true, source: "demo" }),
+        createdAt: new Date(now - 2 * day),
+      },
+      {
+        agentId,
+        agentName,
+        kind: "trade",
+        mood: "confident",
+        text: "پوزیشن LONG روی BTC/USDT با ۵۰۰ تتر و اهرم ۳x باز کردم. حد ضرر زیر کف کانال و هدف روی مقاومت ۴ ساعته تنظیم شد؛ نسبت سود به ریسک ۱ به ۲ رعایت شد.",
+        meta: JSON.stringify({ seed: true }),
+        createdAt: new Date(now - 3 * day),
+      },
+      {
+        agentId,
+        agentName,
+        kind: "close",
+        mood: "satisfied",
+        text: "معاملهٔ قبل با رسیدن به تارگت بسته شد. +۵۸٫۴ USDT سود خالص ثبت شد و نتیجه به لیگ کارمندان منتقل شد.",
+        meta: JSON.stringify({ seed: true }),
+        createdAt: new Date(now - 3 * day + 5 * 60 * 60 * 1000),
+      },
+      {
+        agentId,
+        agentName,
+        kind: "review",
+        mood: "reflective",
+        text: "یک stop-loss در روز چهارم فعال شد (-۲۴٫۸ USDT). پرامپت مدیریت ریسک بازبینی شد: در نوسان بالای ۳٪ دیگر اهرم ۳x پیشنهاد نمیدهم.",
+        meta: JSON.stringify({ seed: true }),
+        createdAt: new Date(now - 5 * day),
+      },
+    ]);
+  }
+
+  const existingPositions = await db.select().from(tradePositions).limit(1);
+  if (existingPositions.length === 0) {
+    const demo = [
+      { pnl: 58.4, reason: "target", daysAgo: 3, side: "LONG" },
+      { pnl: 41.2, reason: "target", daysAgo: 4, side: "LONG" },
+      { pnl: -24.8, reason: "stop", daysAgo: 5, side: "SHORT" },
+      { pnl: 73.6, reason: "target", daysAgo: 6, side: "LONG" },
+      { pnl: -19.3, reason: "stop", daysAgo: 8, side: "SHORT" },
+      { pnl: 35.9, reason: "target", daysAgo: 9, side: "LONG" },
+    ];
+    const entry = 75800;
+    const stop = 74200;
+    const tp = 79000;
+    await db.insert(tradePositions).values(
+      demo.map((d) => {
+        const exit = d.pnl > 0 ? tp : stop;
+        const opened = new Date(now - d.daysAgo * day);
+        return {
+          agentId,
+          agentName,
+          symbol: "BTC/USDT",
+          side: d.side,
+          entryPrice: entry,
+          currentPrice: exit,
+          takeProfit: d.side === "LONG" ? tp : entry - (tp - entry),
+          stopLoss: d.side === "LONG" ? stop : entry + (entry - stop),
+          sizeUsdt: 500,
+          leverage: 3,
+          quantity: (500 * 3) / entry,
+          unrealizedPnl: d.pnl,
+          realizedPnl: d.pnl,
+          pnlPct: (d.pnl / 500) * 100,
+          mode: "paper",
+          status: "closed",
+          closeReason: d.reason,
+          openedAt: opened,
+          closedAt: new Date(opened.getTime() + 5 * 60 * 60 * 1000),
+          updatedAt: new Date(opened.getTime() + 5 * 60 * 60 * 1000),
+        };
+      })
+    );
+  }
+
+  const existingSignals = await db.select().from(tradeSignals).limit(1);
+  if (existingSignals.length === 0) {
+    const entry = 75800;
+    const stop = 74200;
+    const tp = 79000;
+    const targetPct = ((tp - entry) / entry) * 100;
+    const stopPct = ((entry - stop) / entry) * 100;
+    const draft = {
+      symbol: "BTC/USDT",
+      side: "LONG",
+      entryPrice: entry,
+      stopLoss: stop,
+      takeProfit: tp,
+      targetPct,
+      stopPct,
+      riskReward: targetPct / stopPct,
+      leverage: 3,
+      positionUsdt: 500,
+      estimatedProfitUsdt: (500 * 3 * targetPct) / 100,
+      estimatedHoursMin: 4,
+      estimatedHoursMax: 6,
+      confidence: 86,
+      rsi: 54,
+      macdHist: 26,
+      ma20: 75300,
+      ma50: 74400,
+      support: 74180,
+      resistance: 78980,
+      fearGreed: 55,
+      orderbookImbalance: 0.12,
+      whaleFlowUsdt: 420000,
+      sentiment: 0.1,
+      volatilityPct: 1.4,
+      dataSource: "seed",
+      dataSources: ["دادهٔ نمونه میز کار"],
+      analysisReason:
+        "شکست کانال نزولی ۴ ساعته + واگرایی مثبت در RSI + افزایش حجم خریداران در صرافی.",
+      riskNotes: "ریسک حداکثر ۵۰ USDT • سقف پوزیشن ۵۰۰ USDT • اهرم مجاز 5x • R/R ≥ ۱ به ۲",
+      status: "pending",
+      expiresAt: new Date(now + 4 * 60 * 60 * 1000),
+      createdAt: new Date(now - 20 * 60 * 1000),
+    };
+    await db.insert(tradeSignals).values({
+      ...draft,
+      agentId,
+      agentName,
+      dataSources: JSON.stringify(draft.dataSources),
+      telegramMessage: formatSignalMessage(draft),
+    });
   }
 }
