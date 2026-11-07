@@ -4,7 +4,36 @@ import { users } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { ensureSeed, hashPw, signSession, verifySession } from "@/lib/seed";
 
+const attempts = new Map<string, { count: number; resetAt: number }>();
+
+function rateLimited(ip: string) {
+  const now = Date.now();
+  const rec = attempts.get(ip);
+  if (!rec || rec.resetAt < now) {
+    attempts.set(ip, { count: 1, resetAt: now + 10 * 60_000 });
+    return false;
+  }
+  rec.count += 1;
+  return rec.count > 12;
+}
+
 export async function POST(req: NextRequest) {
+  if (!process.env.AUTH_SECRET && process.env.NODE_ENV === "production") {
+    return NextResponse.json(
+      { error: "AUTH_SECRET روی سرور ست نشده است؛ ورود امن غیرفعال است." },
+      { status: 503 }
+    );
+  }
+  const ip =
+    req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
+    req.headers.get("x-real-ip") ||
+    "unknown";
+  if (rateLimited(ip)) {
+    return NextResponse.json(
+      { error: "تلاش‌های ناموفق زیاد؛ ۱۰ دقیقه بعد دوباره امتحان کنید." },
+      { status: 429 }
+    );
+  }
   await ensureSeed();
   const { email, password } = await req.json();
   const rows = await db.select().from(users).where(eq(users.email, email));

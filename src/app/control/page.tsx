@@ -1,7 +1,13 @@
 "use client";
-import { useEffect, useMemo, useState } from "react";
 
-const fa = (n: any) => Number(n || 0).toLocaleString("fa-IR");
+import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import OfficeCard from "@/components/OfficeCard";
+import { themeFor, relativeTime } from "@/lib/office-theme";
+
+const fa = (n: any) => Number(n || 0).toLocaleString("fa-IR", { maximumFractionDigits: 2 });
+const dt = (d: any) =>
+  d ? new Date(d).toLocaleString("fa-IR", { dateStyle: "short", timeStyle: "short" }) : "—";
 
 const statusMap: Record<string, [string, string]> = {
   new: ["جدید", "bg-blue-100 text-blue-700"],
@@ -23,30 +29,42 @@ const typeMap: Record<string, string> = {
   other: "سایر",
 };
 
-const specialtyMap: Record<string, [string, string]> = {
-  crypto: ["🪙 کارمند رمزارز / کریپتو", "bg-amber-100 text-amber-800"],
-  freelance: ["⚛️ توسعه و فریلنسری", "bg-cyan-100 text-cyan-800"],
-  bot: ["🤖 ربات فروش تلگرام", "bg-sky-100 text-sky-800"],
-  content: ["📊 محتوا و ترجمه", "bg-violet-100 text-violet-800"],
-  custom_api: ["🔌 وب‌هوک / API خارجی", "bg-emerald-100 text-emerald-800"],
+const specialtyMap: Record<string, string> = {
+  crypto: "🪙 رمزارز و ترید",
+  freelance: "⚛️ توسعه و فریلنسری",
+  bot: "🤖 فروش و تلگرام",
+  content: "📊 محتوا و ترجمه",
+  custom_api: "🔌 API خارجی",
+};
+
+const tradeStatus: Record<string, [string, string]> = {
+  awaiting_approval: ["منتظر تأیید", "bg-amber-500/15 text-amber-300 border-amber-400/30"],
+  succeeded: ["موفق", "bg-emerald-500/15 text-emerald-300 border-emerald-400/30"],
+  failed: ["ناموفق", "bg-red-500/15 text-red-300 border-red-400/30"],
+  rejected: ["رد شده", "bg-slate-500/15 text-slate-300 border-slate-400/30"],
+  queued: ["در صف", "bg-slate-500/15 text-slate-300 border-slate-400/30"],
 };
 
 export default function Control() {
-  const [view, setView] = useState("dashboard");
+  const [view, setView] = useState("hq");
   const [user, setUser] = useState<any>(null);
   const [projects, setProjects] = useState<any[]>([]);
   const [tasks, setTasks] = useState<any[]>([]);
   const [msgs, setMsgs] = useState<any[]>([]);
   const [txs, setTxs] = useState<any[]>([]);
   const [logs, setLogs] = useState<any[]>([]);
+  const [activity, setActivity] = useState<any[]>([]);
   const [tools, setTools] = useState<any[]>([]);
+  const [jobs, setJobs] = useState<any[]>([]);
   const [agentsList, setAgentsList] = useState<any[]>([]);
   const [walletInfo, setWalletInfo] = useState<any>(null);
   const [stats, setStats] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState("");
+  const [busy, setBusy] = useState("");
+  const [dept, setDept] = useState("all");
 
-  // فیلتر و فرم پروژه
+  // پروژه‌ها
   const [q, setQ] = useState("");
   const [filter, setFilter] = useState("all");
   const [showForm, setShowForm] = useState(false);
@@ -66,70 +84,55 @@ export default function Control() {
     wallet: "",
   });
 
-  // چت و ابزارها
-  const [chatUser, setChatUser] = useState("آرش کریمی");
+  // چت و ابزار
+  const [chatUser, setChatUser] = useState("");
   const [chatText, setChatText] = useState("");
-  const [toolInput, setToolInput] = useState("فروشگاه اینترنتی");
+  const [toolInput, setToolInput] = useState("");
   const [toolOut, setToolOut] = useState("");
 
-  // تراکنش دستی
+  // درآمد دستی (با شاهد)
   const [txForm, setTxForm] = useState<any>({
     title: "",
-    projectTitle: "",
-    agentName: "سیستم مرکزی",
+    agentName: "",
     amountUsdt: "",
     network: "TRC20",
     txHash: "",
-    kind: "income",
-    status: "confirmed",
+    projectTitle: "",
   });
 
-  // کارمند رمزارز + ناوگان ایجنت‌ها + کیف پول واحد
-  const [cryptoStrategy, setCryptoStrategy] = useState("arbitrage");
-  const [cryptoCustomAmount, setCryptoCustomAmount] = useState("");
-  const [cryptoReport, setCryptoReport] = useState("");
-  const [runningAgentId, setRunningAgentId] = useState<number | null>(null);
-  const [selectedApiAgent, setSelectedApiAgent] = useState<any>(null);
-
-  // فرم ساخت ایجنت / کارمند جدید
+  // کیف پول و کارمند جدید
+  const [walletForm, setWalletForm] = useState({ address: "", network: "USDT-TRC20", autoSweep: true });
   const [newAgent, setNewAgent] = useState({
     name: "",
     role: "",
     specialty: "crypto",
-    avatar: "🪙",
-    strategy: "",
-  });
-
-  // فرم تنظیم کیف پول واحد
-  const [walletForm, setWalletForm] = useState({
-    address: "",
-    network: "USDT-TRC20",
-    autoSweep: true,
+    department: "",
+    goalTitle: "",
+    goalTargetUsdt: "",
   });
 
   const notify = (t: string) => {
     setToast(t);
-    setTimeout(() => setToast(""), 3500);
+    setTimeout(() => setToast(""), 4500);
   };
-
   const copyText = (txt: string, label = "کپی شد ✅") => {
-    if (typeof navigator !== "undefined" && navigator.clipboard) {
-      navigator.clipboard.writeText(txt).catch(() => {});
-    }
+    if (typeof navigator !== "undefined" && navigator.clipboard) navigator.clipboard.writeText(txt).catch(() => {});
     notify(label);
   };
 
   async function load() {
-    const [p, t, m, tx, l, tl, ag, wl, s] = await Promise.all([
-      fetch("/api/projects").then((r) => r.json()),
-      fetch("/api/rest?type=tasks").then((r) => r.json()),
-      fetch("/api/rest?type=messages").then((r) => r.json()),
-      fetch("/api/rest?type=transactions").then((r) => r.json()),
-      fetch("/api/rest?type=logs").then((r) => r.json()),
-      fetch("/api/rest?type=tools").then((r) => r.json()),
-      fetch("/api/agents").then((r) => r.json()),
-      fetch("/api/wallet").then((r) => r.json()),
-      fetch("/api/stats").then((r) => r.json()),
+    const [p, t, m, tx, l, tl, ag, wl, s, act, jb] = await Promise.all([
+      fetch("/api/projects").then((r) => r.json()).catch(() => []),
+      fetch("/api/rest?type=tasks").then((r) => r.json()).catch(() => []),
+      fetch("/api/rest?type=messages").then((r) => r.json()).catch(() => []),
+      fetch("/api/rest?type=transactions").then((r) => r.json()).catch(() => []),
+      fetch("/api/rest?type=logs").then((r) => r.json()).catch(() => []),
+      fetch("/api/rest?type=tools").then((r) => r.json()).catch(() => []),
+      fetch("/api/agents").then((r) => r.json()).catch(() => ({})),
+      fetch("/api/wallet").then((r) => r.json()).catch(() => null),
+      fetch("/api/stats").then((r) => r.json()).catch(() => null),
+      fetch("/api/rest?type=activity").then((r) => r.json()).catch(() => []),
+      fetch("/api/jobs").then((r) => r.json()).catch(() => []),
     ]);
     setProjects(Array.isArray(p) ? p : []);
     setTasks(Array.isArray(t) ? t : []);
@@ -137,6 +140,8 @@ export default function Control() {
     setTxs(Array.isArray(tx) ? tx : []);
     setLogs(Array.isArray(l) ? l : []);
     setTools(Array.isArray(tl) ? tl : []);
+    setActivity(Array.isArray(act) ? act : []);
+    setJobs(Array.isArray(jb) ? jb : []);
     setAgentsList(Array.isArray(ag?.agents) ? ag.agents : []);
     setWalletInfo(wl);
     if (wl?.masterWallet) {
@@ -151,1835 +156,1322 @@ export default function Control() {
   }
 
   useEffect(() => {
+    let iv: ReturnType<typeof setInterval> | null = null;
     fetch("/api/auth/login")
       .then((r) => r.json())
       .then((d) => {
         if (!d.user) {
           location.href = "/login";
-        } else {
-          setUser(d.user);
+          return;
         }
+        setUser(d.user);
+        load();
+        iv = setInterval(() => {
+          fetch("/api/stats").then((r) => r.json()).then(setStats).catch(() => {});
+          fetch("/api/rest?type=activity")
+            .then((r) => r.json())
+            .then((x) => Array.isArray(x) && setActivity(x))
+            .catch(() => {});
+        }, 10000);
+      })
+      .catch(() => {
+        location.href = "/login";
       });
-    load();
-    const iv = setInterval(() => {
-      fetch("/api/stats")
-        .then((r) => r.json())
-        .then(setStats)
-        .catch(() => {});
-    }, 6000);
-    return () => clearInterval(iv);
+    return () => {
+      if (iv) clearInterval(iv);
+    };
   }, []);
 
-  const filtered = projects.filter(
+  /* ── محاسبات مشتق‌شده از داده واقعی ───────────────────────────── */
+  const startOfDay = useMemo(() => {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    return d.getTime();
+  }, []);
+
+  const byAgent = useMemo(() => {
+    const map = new Map<string, { todayEarned: number; lastAt: string | null; failed: number }>();
+    for (const a of activity) {
+      const cur = map.get(a.agentName) || { todayEarned: 0, lastAt: null, failed: 0 };
+      const t = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+      if (t >= startOfDay) cur.todayEarned += Number(a.rewardUsdt || 0);
+      if (a.status === "failed") cur.failed += 1;
+      if (!cur.lastAt || t > new Date(cur.lastAt).getTime()) cur.lastAt = a.createdAt || cur.lastAt;
+      map.set(a.agentName, cur);
+    }
+    return map;
+  }, [activity, startOfDay]);
+
+  const pendingJobsByAgent = useMemo(() => {
+    const map = new Map<number, number>();
+    for (const j of jobs) {
+      if (["queued", "awaiting_approval", "approved", "running"].includes(j.status)) {
+        map.set(j.agentId, (map.get(j.agentId) || 0) + 1);
+      }
+    }
+    return map;
+  }, [jobs]);
+
+  const awaitingJobs = jobs.filter((j) => j.status === "awaiting_approval");
+  const pendingTasks = tasks.filter((t) => t.status === "pending");
+  const market = stats?.market;
+  const marketLine = market?.entries?.length
+    ? market.entries.map((e: any) => `${e.symbol.replace("USDT", "")} ${fa(e.price)}`).join(" · ")
+    : "";
+  const marketStale = market?.entries?.some((e: any) => e.stale);
+
+  const filteredProjects = projects.filter(
     (p) =>
       (filter === "all" || p.status === filter) &&
-      (p.title + p.clientName + p.telegramUser).includes(q)
+      (p.title + p.clientName + (p.telegramUser || "")).includes(q)
   );
 
   const chatList = useMemo(() => {
-    const map = new Map();
+    const map = new Map<string, any>();
     msgs.forEach((m) => {
       if (!map.has(m.clientName)) map.set(m.clientName, m);
     });
     return [...map.values()];
   }, [msgs]);
+  const chatMsgs = msgs.filter((m) => m.clientName === chatUser).slice().reverse();
+  const activeChat = chatUser || chatList[0]?.clientName || "";
 
-  const chatMsgs = msgs
-    .filter((m) => m.clientName === chatUser)
-    .slice()
-    .reverse();
-
-  const cryptoEmployee = useMemo(
+  const offices = useMemo(
     () =>
-      agentsList.find((a) => a.specialty === "crypto") || agentsList[0] || null,
-    [agentsList]
+      agentsList.filter((a) => dept === "all" || a.specialty === dept),
+    [agentsList, dept]
   );
 
-  const totalFleetEarned = useMemo(
-    () =>
-      agentsList.reduce((sum, a) => sum + Number(a.earnedUsdt || 0), 0),
-    [agentsList]
-  );
+  const totalFleetEarned = agentsList.reduce((s, a) => s + Number(a.earnedUsdt || 0), 0);
+  const maxChart = Math.max(1, ...(stats?.chart?.map((c: any) => Number(c.v) || 0) || [1]));
+
+  /* ── عملیات ──────────────────────────────────────────────────── */
+  async function api(url: string, method: string, body?: any) {
+    const res = await fetch(url, {
+      method,
+      headers: { "Content-Type": "application/json" },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(d.error || `خطای ${res.status}`);
+    return d;
+  }
 
   async function saveProject(e: any) {
     e.preventDefault();
-    const method = edit ? "PUT" : "POST";
-    const body = edit ? { ...form, id: edit.id } : form;
-    const res = await fetch("/api/projects", {
-      method,
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    const d = await res.json();
-    if (edit) setProjects((prev) => prev.map((p) => (p.id === d.id ? d : p)));
-    else setProjects((prev) => [d, ...prev]);
-    setShowForm(false);
-    setEdit(null);
-    notify(edit ? "پروژه ویرایش شد ✅" : "پروژه جدید ساخته شد ✅");
-    load();
+    try {
+      if (edit) await api("/api/projects", "PUT", { ...form, id: edit.id });
+      else await api("/api/projects", "POST", form);
+      notify(edit ? "پروژه ویرایش شد ✅" : "پروژه جدید ساخته شد ✅");
+      setShowForm(false);
+      setEdit(null);
+      await load();
+    } catch (err: any) {
+      notify(`⚠️ ${err.message}`);
+    }
   }
 
   async function delProject(id: number) {
     if (!confirm("این پروژه حذف شود؟")) return;
-    setProjects((prev) => prev.filter((p) => p.id !== id));
-    await fetch(`/api/projects?id=${id}`, { method: "DELETE" });
-    notify("پروژه حذف شد 🗑️");
-  }
-
-  async function actTask(t: any, st: string) {
-    setTasks((prev) =>
-      prev.map((x) => (x.id === t.id ? { ...x, status: st } : x))
-    );
-    await fetch("/api/rest", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        _type: "tasks",
-        id: t.id,
-        status: st,
-        title: t.title,
-        agent: t.agent,
-        actionType: t.actionType,
-        description: t.description,
-        projectTitle: t.projectTitle,
-        risk: t.risk,
-        payload: t.payload,
-      }),
-    });
-    await fetch("/api/telegram/webhook", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        callback_query: {
-          data: `${st === "approved" ? "approve" : "reject"}:${t.id}`,
-          from: { username: "admin" },
-        },
-      }),
-    });
-    notify(
-      st === "approved"
-        ? "از طریق پنل و تلگرام تأیید شد ✅"
-        : "تسک رد شد ❌"
-    );
-    load();
-  }
-
-  async function sendChat() {
-    if (!chatText.trim()) return;
-    const body = {
-      _type: "messages",
-      chatId: "1001",
-      clientName: chatUser,
-      username:
-        chatList.find((c) => c.clientName === chatUser)?.username || "",
-      direction: "out",
-      text: chatText,
-      status: "read",
-      source: "panel",
-    };
-    const res = await fetch("/api/rest", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    const d = await res.json();
-    setMsgs((prev) => [d, ...prev]);
-    setChatText("");
-    notify("پیام از طریق ربات تلگرام ارسال شد 📩");
-    setTimeout(async () => {
-      const r = await fetch("/api/telegram/webhook", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          clientName: chatUser,
-          username: body.username,
-          text: "ممنون! متوجه شدم، لطفاً آدرس کیف پول واحد USDT رو هم بفرستید 🙏",
-        }),
-      });
-      const dd = await r.json();
-      if (dd.message) setMsgs((prev) => [dd.message, ...prev]);
-    }, 1800);
-  }
-
-  async function simulateWebhook() {
-    const texts = [
-      "سلام، یه پروژه Next.js دارم بودجه ۶۰۰ USDT",
-      "برای تحلیل رمزارز و ربات ترید چقدر می‌گیرید؟",
-      "پروژه رو شروع کنیم، پیش‌پرداخت USDT می‌زنم",
-    ];
-    const t = texts[Math.floor(Math.random() * texts.length)];
-    await fetch("/api/telegram/webhook", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        message: {
-          text: t,
-          from: { first_name: "کاربر جدید", username: "new_client" },
-          chat: { id: 777 },
-        },
-      }),
-    });
-    notify("Webhook تلگرام: پیام جدید + تسک تأیید ساخته شد 🔔");
-    load();
-  }
-
-  async function runTool(tool: string) {
-    setToolOut("⏳ ایجنت در حال اجرا...");
-    const r = await fetch("/api/tools/run", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ tool, input: toolInput }),
-    });
-    const d = await r.json();
-    setToolOut(d.output);
-    setTools((prev) => [d, ...prev]);
-    load();
-  }
-
-  async function addTx(e: any) {
-    e.preventDefault();
-    const r = await fetch("/api/rest", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        _type: "transactions",
-        ...txForm,
-        destinationWallet: walletForm.address,
-      }),
-    });
-    const d = await r.json();
-    setTxs((prev) => [d, ...prev]);
-    setTxForm({
-      title: "",
-      projectTitle: "",
-      agentName: "سیستم مرکزی",
-      amountUsdt: "",
-      network: "TRC20",
-      txHash: "",
-      kind: "income",
-      status: "confirmed",
-    });
-    notify("تراکنش در کیف پول واحد ثبت شد 💰");
-    load();
-  }
-
-  // اجرای کارمند رمزارز یا هر ایجنت دیگر و واریز مستقیم به کیف پول واحد
-  async function executeAgentPayout(
-    agent: any,
-    options?: { strategy?: string; amountUsdt?: number; title?: string }
-  ) {
-    setRunningAgentId(agent.id);
     try {
-      const res = await fetch("/api/agents/ingest", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-agent-key": agent.apiKey,
-        },
-        body: JSON.stringify({
-          agentId: agent.id,
-          slug: agent.slug,
-          strategy: options?.strategy || "arbitrage",
-          amountUsdt: options?.amountUsdt,
-          title: options?.title,
-        }),
-      });
-      const data = await res.json();
-      if (data.ok) {
-        if (agent.specialty === "crypto" || options?.strategy) {
-          setCryptoReport(data.report);
-        }
-        notify(
-          `+${fa(data.amountUsdt)} USDT توسط «${agent.name}» به کیف پول واحد واریز شد 🪙`
-        );
-        await load();
-      } else {
-        notify(data.error || "خطا در اجرای ایجنت");
-      }
-    } finally {
-      setRunningAgentId(null);
+      await api(`/api/projects?id=${id}`, "DELETE");
+      notify("پروژه حذف شد 🗑️");
+      await load();
+    } catch (err: any) {
+      notify(`⚠️ ${err.message}`);
     }
   }
 
-  // استخدام کارمند دیجیتال / ساخت API ایجنت جدید
+  async function actTask(t: any, st: string) {
+    try {
+      await api("/api/rest", "PUT", { _type: "tasks", id: t.id, status: st });
+      notify(st === "approved" ? "تسک تأیید و در لاگ ثبت شد ✅" : "تسک رد شد ❌");
+      await load();
+    } catch (err: any) {
+      notify(`⚠️ ${err.message}`);
+    }
+  }
+
+  async function jobAction(id: number, action: "approve" | "reject") {
+    setBusy(`job-${id}`);
+    try {
+      const d = await api("/api/jobs", "PATCH", { id, action });
+      if (action === "reject") notify("کار رد شد ❌");
+      else if (d.execution?.ok) notify("کار با موفقیت اجرا شد ✅");
+      else notify(`⚠️ اجرا ناموفق: ${d.execution?.error || d.error || ""}`);
+      await load();
+    } catch (err: any) {
+      notify(`⚠️ ${err.message}`);
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function sendChat() {
+    if (!chatText.trim() || !activeChat) return;
+    setBusy("chat");
+    try {
+      const target = chatList.find((c) => c.clientName === activeChat);
+      const d = await api("/api/telegram/send", "POST", {
+        action: "client_message",
+        chatId: target?.chatId || "",
+        clientName: activeChat,
+        username: target?.username || "",
+        text: chatText,
+      });
+      if (d.ok) {
+        notify("پیام واقعی از طریق ربات تلگرام ارسال شد 📩");
+        setChatText("");
+        await load();
+      } else {
+        notify(`⚠️ ارسال نشد: ${d.telegram || "تلگرام تنظیم نشده"}`);
+      }
+    } catch (err: any) {
+      notify(`⚠️ ${err.message}`);
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function runTool(tool: string) {
+    if (!toolInput.trim()) {
+      notify("ورودی ابزار را وارد کنید");
+      return;
+    }
+    setBusy("tool");
+    setToolOut("⏳ در حال ارسال به ورکر واقعی…");
+    try {
+      const d = await api("/api/tools/run", "POST", { tool, input: toolInput });
+      setToolOut(d.output || "ورکر خروجی متنی برنگرداند.");
+      notify("اجرای ابزار در دفتر کارمند ثبت شد ✅");
+      await load();
+    } catch (err: any) {
+      setToolOut(`⛔ ${err.message}`);
+      notify(`⚠️ ${err.message}`);
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function addIncome(e: any) {
+    e.preventDefault();
+    try {
+      const d = await api("/api/rest", "POST", { _type: "transactions", ...txForm });
+      notify(d.duplicate ? "این هش قبلاً ثبت شده بود ⚠️" : "درآمد واقعی با شاهد ثبت شد ✅");
+      setTxForm({ title: "", agentName: "", amountUsdt: "", network: "TRC20", txHash: "", projectTitle: "" });
+      await load();
+    } catch (err: any) {
+      notify(`⚠️ ${err.message}`);
+    }
+  }
+
   async function createNewAgent(e: any) {
     e.preventDefault();
     if (!newAgent.name.trim()) return;
-    const res = await fetch("/api/agents", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(newAgent),
-    });
-    const created = await res.json();
-    setAgentsList((prev) => [created, ...prev]);
-    setSelectedApiAgent(created);
-    setNewAgent({
-      name: "",
-      role: "",
-      specialty: "crypto",
-      avatar: "🪙",
-      strategy: "",
-    });
-    notify(`کارمند/API جدید «${created.name}» ساخته و به کیف پول واحد متصل شد ✅`);
-    load();
+    try {
+      const created = await api("/api/agents", "POST", newAgent);
+      notify(`کارمند «${created.name}» استخدام و اتاقش آماده شد ✅`);
+      setNewAgent({ name: "", role: "", specialty: "crypto", department: "", goalTitle: "", goalTargetUsdt: "" });
+      await load();
+    } catch (err: any) {
+      notify(`⚠️ ${err.message}`);
+    }
   }
 
-  async function toggleAgentStatus(agent: any) {
-    const nextStatus = agent.status === "active" ? "paused" : "active";
-    setAgentsList((prev) =>
-      prev.map((a) => (a.id === agent.id ? { ...a, status: nextStatus } : a))
-    );
-    await fetch("/api/agents", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...agent, status: nextStatus }),
-    });
-    notify(
-      nextStatus === "active"
-        ? `ایجنت «${agent.name}» فعال شد 🟢`
-        : `ایجنت «${agent.name}» متوقف شد ⏸️`
-    );
+  async function toggleAgent(agent: any) {
+    try {
+      await api(`/api/agents/${agent.id}/command`, "POST", { action: "toggle" });
+      await load();
+      notify(agent.status === "active" ? "کارمند متوقف شد ⏸" : "کارمند فعال شد ▶️");
+    } catch (err: any) {
+      notify(`⚠️ ${err.message}`);
+    }
   }
 
   async function deleteAgent(id: number) {
-    if (!confirm("این ایجنت حذف شود؟")) return;
-    setAgentsList((prev) => prev.filter((a) => a.id !== id));
-    await fetch(`/api/agents?id=${id}`, { method: "DELETE" });
-    notify("ایجنت حذف شد 🗑️");
+    if (!confirm("این کارمند و اتاقش حذف شود؟")) return;
+    try {
+      await api(`/api/agents?id=${id}`, "DELETE");
+      notify("کارمند حذف شد 🗑️");
+      await load();
+    } catch (err: any) {
+      notify(`⚠️ ${err.message}`);
+    }
   }
 
   async function saveMasterWallet(e: any) {
     e.preventDefault();
-    const res = await fetch("/api/wallet", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(walletForm),
-    });
-    const d = await res.json();
-    if (d.ok) {
-      notify("آدرس کیف پول واحد ذخیره شد و همه ایجنت‌ها به آن متصل شدند 💳✅");
-      load();
+    try {
+      await api("/api/wallet", "PUT", walletForm);
+      notify("آدرس کیف پول واحد ذخیره شد و در همه دفاتر اعمال شد 💳");
+      await load();
+    } catch (err: any) {
+      notify(`⚠️ ${err.message}`);
     }
   }
 
-  const maxChart = Math.max(...(stats?.chart?.map((c: any) => c.v) || [1]));
+  async function refreshMarket() {
+    setBusy("market");
+    try {
+      const d = await api("/api/market", "POST");
+      notify(`قیمت واقعی به‌روزرسانی شد: ${d.quotes?.map((x: any) => `${x.symbol} ${x.price}`).join(" • ")}`);
+      await load();
+    } catch (err: any) {
+      notify(`⚠️ ${err.message}`);
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function sendTelegramReport() {
+    setBusy("tg");
+    try {
+      const d = await api("/api/telegram/send", "POST", { action: "daily_reports" });
+      notify(
+        d.sent > 0
+          ? `${fa(d.sent)} گزارش واقعی به تلگرام ارسال شد ✅`
+          : `ارسال انجام نشد: ${d.errors?.[0] || "تلگرام پیکربندی نشده است"}`
+      );
+    } catch (err: any) {
+      notify(`⚠️ ${err.message}`);
+    } finally {
+      setBusy("");
+    }
+  }
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
+      <div className="grid min-h-screen place-items-center bg-[#0B1220] text-white">
         <div className="text-center">
-          <div className="text-5xl animate-bounce">🤖</div>
-          <p className="mt-3 font-bold">
-            در حال بارگذاری ناوگان ایجنت‌ها و کیف پول واحد...
-          </p>
+          <div className="text-5xl animate-bounce">🏢</div>
+          <p className="mt-3 font-bold">در حال باز کردن ساختمان اداری…</p>
         </div>
       </div>
     );
   }
 
   const nav: [string, string][] = [
-    ["dashboard", "🏠 داشبورد"],
-    ["agents", "🪙 ناوگان ایجنت‌ها و رمزارز"],
+    ["hq", "🏢 ساختمان مرکزی"],
+    ["agents", "👥 کارمندان و دفاتر"],
     ["projects", "💼 پروژه‌ها"],
     ["chats", "💬 گفتگوها"],
-    ["approvals", "✅ تأیید انسانی"],
-    ["earnings", "💰 کیف پول واحد و درآمد"],
-    ["tools", "⚡ ابزارهای خودکار"],
-    ["telegram", "📩 تلگرام و Webhook"],
-    ["deploy", "☁️ اتصال Supabase & Vercel"],
-    ["logs", "🧠 لاگ ایجنت‌ها"],
+    ["approvals", "✅ صف تأیید"],
+    ["earnings", "💰 کیف پول و درآمد"],
+    ["tools", "⚡ ابزارها"],
+    ["telegram", "📩 تلگرام"],
+    ["logs", "🧾 گزارش کارمندان"],
   ];
 
-  const originUrl =
-    typeof window !== "undefined"
-      ? window.location.origin
-      : "https://your-app.vercel.app";
-
   return (
-    <div className="min-h-screen flex bg-[#F6F7F9]">
-      {/* سایدبار دسکتاپ */}
-      <aside className="hidden lg:flex w-72 flex-col bg-[#0B1220] text-white p-5 sticky top-0 h-screen overflow-y-auto">
-        <div className="flex items-center gap-3">
-          <div className="w-11 h-11 bg-emerald-500 rounded-2xl grid place-items-center text-2xl">
-            🤖
-          </div>
-          <div>
-            <b>Freelance & Crypto OS</b>
-            <p className="text-xs text-slate-400">
-              ناوگان ایجنت + کیف پول واحد
+    <div dir="rtl" className="min-h-screen bg-[#F3F5F9]">
+      <div className="flex">
+        {/* ── سایدبار ───────────────────────────────────────────── */}
+        <aside className="sticky top-0 hidden h-screen w-72 flex-col overflow-y-auto bg-[#0B1220] p-5 text-white lg:flex">
+          <Link href="/" className="flex items-center gap-3">
+            <div className="grid h-11 w-11 place-items-center rounded-2xl bg-gradient-to-br from-emerald-400 to-emerald-600 text-2xl">
+              🏢
+            </div>
+            <div>
+              <b className="text-sm">Agent Company OS</b>
+              <p className="text-[11px] text-slate-400">دفتر مستقل هر کارمند</p>
+            </div>
+          </Link>
+
+          <div className="mt-5 rounded-2xl border border-emerald-400/25 bg-emerald-500/10 p-3 text-xs">
+            <div className="flex items-center justify-between">
+              <span className="font-bold text-emerald-300">💳 کیف پول واحد</span>
+              <span className="rounded-full bg-emerald-500 px-2 py-0.5 text-[9px] font-black text-black">
+                {walletForm.network}
+              </span>
+            </div>
+            <p className="mt-1 text-lg font-black">{fa(stats?.income ?? totalFleetEarned)} USDT</p>
+            <p className="mt-0.5 truncate text-[10px] text-slate-300" dir="ltr">
+              {walletForm.address || "آدرس ست نشده"}
             </p>
-          </div>
-        </div>
-
-        {/* کارت خلاصه کیف پول واحد در سایدبار */}
-        <div className="bg-emerald-500/15 border border-emerald-400/30 rounded-2xl p-3 mt-5 text-xs">
-          <div className="flex items-center justify-between">
-            <span className="text-emerald-300 font-bold">💳 کیف پول واحد</span>
-            <span className="bg-emerald-500 text-black px-2 py-0.5 rounded-full font-bold text-[10px]">
-              {walletForm.network}
-            </span>
-          </div>
-          <p className="text-lg font-black text-white mt-1">
-            {fa(stats?.income || totalFleetEarned)} USDT
-          </p>
-          <p
-            className="text-slate-300 truncate mt-1 cursor-pointer"
-            dir="ltr"
-            onClick={() => copyText(walletForm.address, "آدرس کیف پول کپی شد 💳")}
-          >
-            {walletForm.address}
-          </p>
-        </div>
-
-        <div className="bg-white/10 rounded-2xl p-3 mt-3 text-xs">
-          <span className="live-dot inline-block w-2 h-2 bg-emerald-400 rounded-full ml-2"></span>
-          {fa(stats?.activeAgents || agentsList.length)} ایجنت فعال متصل
-          <p className="text-emerald-300 mt-1" dir="ltr">
-            @FreelanceAgentBot
-          </p>
-        </div>
-
-        <nav className="mt-5 space-y-1 flex-1">
-          {nav.map(([k, l]) => (
-            <button
-              key={k}
-              onClick={() => setView(k)}
-              className={`w-full text-right px-4 py-2.5 rounded-xl font-bold text-sm transition ${
-                view === k
-                  ? "bg-emerald-500 text-black"
-                  : "hover:bg-white/10 text-slate-200"
-              }`}
-            >
-              {l}
-              {k === "approvals" && stats?.pendingTasks > 0 && (
-                <span className="bg-red-500 text-white text-xs px-2 py-0.5 rounded-full float-left">
-                  {fa(stats.pendingTasks)}
-                </span>
-              )}
-              {k === "chats" && stats?.unread > 0 && (
-                <span className="bg-red-500 text-white text-xs px-2 py-0.5 rounded-full float-left">
-                  {fa(stats.unread)}
-                </span>
-              )}
-            </button>
-          ))}
-        </nav>
-
-        <div className="border-t border-white/10 pt-4 mt-4">
-          <p className="font-bold text-sm">{user?.name || "مدیر سیستم"}</p>
-          <p className="text-xs text-slate-400">{user?.email}</p>
-          <button
-            onClick={async () => {
-              await fetch("/api/auth/login", { method: "DELETE" }).catch(
-                () => {}
-              );
-              location.href = "/login";
-            }}
-            className="text-red-300 text-xs mt-2"
-          >
-            خروج از حساب ←
-          </button>
-        </div>
-      </aside>
-
-      {/* محتوای اصلی */}
-      <main className="flex-1 p-4 md:p-7 max-w-[1400px] mx-auto w-full">
-        <header className="flex flex-wrap gap-3 items-center justify-between">
-          <div>
-            <h1 className="text-2xl md:text-3xl font-black">
-              {nav.find((n) => n[0] === view)?.[1]}
-            </h1>
-            <p className="text-slate-500 text-sm mt-1">
-              {fa(agentsList.length)} ایجنت فعال • {fa(stats?.projects)} پروژه •{" "}
-              {fa(stats?.pendingTasks)} تسک منتظر تأیید
-            </p>
-          </div>
-
-          <div className="flex gap-2 flex-wrap items-center">
-            <span className="bg-white border rounded-full px-3 py-2 text-sm">
-              USDT{" "}
-              <b className="text-emerald-600">
-                ${stats?.livePrice?.toFixed(3) || "1.000"}
-              </b>
-            </span>
-            <span className="bg-white border rounded-full px-3 py-2 text-sm">
-              BTC <b>${fa(stats?.btc)}</b>
-            </span>
-            <span className="bg-white border rounded-full px-3 py-2 text-sm">
-              ETH <b>${fa(stats?.eth)}</b>
-            </span>
-            {cryptoEmployee && (
-              <button
-                onClick={() =>
-                  executeAgentPayout(cryptoEmployee, {
-                    strategy: cryptoStrategy,
-                  })
-                }
-                disabled={runningAgentId === cryptoEmployee.id}
-                className="bg-amber-500 hover:bg-amber-400 text-black px-4 py-2 rounded-full font-bold text-sm transition"
-              >
-                {runningAgentId === cryptoEmployee.id
-                  ? "⏳ در حال معامله..."
-                  : "🪙 اجرای فوری کارمند رمزارز"}
-              </button>
+            {Number(stats?.incomePending) > 0 && (
+              <p className="mt-1 rounded-lg bg-amber-500/15 px-2 py-1 text-[10px] text-amber-300">
+                ⏳ {fa(stats.incomePending)} USDT در انتظار تأیید
+              </p>
             )}
-            <button
-              onClick={simulateWebhook}
-              className="bg-[#229ED9] text-white px-4 py-2 rounded-full font-bold text-sm"
+          </div>
+
+          <nav className="mt-4 flex-1 space-y-1">
+            {nav.map(([k, l]) => (
+              <button
+                key={k}
+                onClick={() => setView(k)}
+                className={`w-full rounded-xl px-3.5 py-2.5 text-right text-sm font-bold transition ${
+                  view === k ? "bg-emerald-500 text-black" : "text-slate-200 hover:bg-white/10"
+                }`}
+              >
+                {l}
+                {k === "approvals" && awaitingJobs.length + pendingTasks.length > 0 && (
+                  <span className="float-left rounded-full bg-red-500 px-1.5 text-[10px] text-white">
+                    {fa(awaitingJobs.length + pendingTasks.length)}
+                  </span>
+                )}
+              </button>
+            ))}
+            <Link
+              href="/control/system"
+              className="block w-full rounded-xl px-3.5 py-2.5 text-right text-sm font-bold text-slate-200 transition hover:bg-white/10"
             >
-              📩 پیام تلگرام
+              🩺 دیباگ و لاگ سیستم
+            </Link>
+          </nav>
+
+          <div className="mt-3 border-t border-white/10 pt-3 text-xs">
+            <p className="font-bold">{user?.name || "مدیرعامل"}</p>
+            <p className="text-slate-400">{user?.email}</p>
+            <button
+              onClick={async () => {
+                await fetch("/api/auth/login", { method: "DELETE" }).catch(() => {});
+                location.href = "/login";
+              }}
+              className="mt-2 text-red-300"
+            >
+              خروج ←
             </button>
           </div>
-        </header>
+        </aside>
 
-        {/* منوی موبایل */}
-        <div className="lg:hidden flex gap-2 overflow-x-auto py-4">
-          {nav.map(([k, l]) => (
-            <button
-              key={k}
-              onClick={() => setView(k)}
-              className={`whitespace-nowrap px-3 py-2 rounded-full text-sm font-bold ${
-                view === k ? "bg-emerald-500 text-black" : "bg-white border"
-              }`}
-            >
-              {l}
-            </button>
-          ))}
-        </div>
-
-        {/* ==================== ۱. داشبورد اصلی ==================== */}
-        {view === "dashboard" && (
-          <section>
-            {/* بنر کیف پول واحد مرکزی */}
-            <div className="bg-[#0B1220] text-white rounded-3xl p-5 mt-4 flex flex-wrap items-center justify-between gap-4">
-              <div>
-                <div className="flex items-center gap-2">
-                  <span className="bg-emerald-500 text-black text-xs font-black px-3 py-1 rounded-full">
-                    کیف پول واحد مرکزی (Unified Master Vault)
-                  </span>
-                  <span className="text-xs text-emerald-300">
-                    ● همه ایجنت‌ها مستقیم به این آدرس واریز می‌کنند
-                  </span>
-                </div>
-                <p className="text-3xl font-black mt-3">
-                  {fa(stats?.income || totalFleetEarned)}{" "}
-                  <span className="text-emerald-400 text-lg">USDT</span>
-                </p>
-                <p className="text-xs text-slate-300 mt-1">
-                  آدرس مقصد:{" "}
-                  <span dir="ltr" className="font-mono text-emerald-300">
-                    {walletForm.address}
-                  </span>{" "}
-                  ({walletForm.network})
-                </p>
-              </div>
-              <div className="flex gap-2 flex-wrap">
-                <button
-                  onClick={() =>
-                    copyText(walletForm.address, "آدرس کیف پول واحد کپی شد ✅")
-                  }
-                  className="bg-white/10 hover:bg-white/20 px-4 py-2.5 rounded-2xl text-sm font-bold"
-                >
-                  📋 کپی آدرس کیف پول
-                </button>
-                <button
-                  onClick={() => setView("agents")}
-                  className="bg-emerald-500 hover:bg-emerald-400 text-black px-5 py-2.5 rounded-2xl text-sm font-bold"
-                >
-                  🪙 مدیریت کارمند رمزارز و ایجنت‌ها ←
-                </button>
-              </div>
+        {/* ── محتوا ─────────────────────────────────────────────── */}
+        <main className="mx-auto w-full max-w-[1400px] p-4 md:p-7">
+          <header className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h1 className="text-xl font-black md:text-3xl">{nav.find((n) => n[0] === view)?.[1] || "🏢 ساختمان مرکزی"}</h1>
+              <p className="mt-1 text-xs text-slate-500">
+                {fa(agentsList.length)} کارمند • {fa(agentsList.filter((a) => a.status === "active").length)} سر کار •{" "}
+                {fa(awaitingJobs.length + pendingTasks.length)} مورد منتظر تأیید شما
+              </p>
             </div>
-
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mt-4">
-              {[
-                [
-                  "💰 کل واریزی به کیف پول واحد",
-                  fa(stats?.income) + " USDT",
-                  "text-emerald-600",
-                ],
-                [
-                  "🪙 تولید ناوگان ایجنت‌ها",
-                  fa(totalFleetEarned) + " USDT",
-                  "text-amber-600",
-                ],
-                ["🚀 پروژه فعال", fa(stats?.active), ""],
-                [
-                  "⏳ منتظر تأیید انسانی",
-                  fa(stats?.pendingTasks),
-                  "text-amber-600",
-                ],
-              ].map(([l, v, c]: any) => (
-                <div key={l} className="bg-white rounded-3xl p-5 border">
-                  <p className="text-slate-500 text-sm">{l}</p>
-                  <p className={`text-2xl font-black mt-2 ${c}`}>{v}</p>
-                </div>
-              ))}
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                onClick={refreshMarket}
+                disabled={busy === "market"}
+                className="rounded-full border bg-white px-3 py-2 text-xs font-bold disabled:opacity-50"
+              >
+                {busy === "market" ? "⏳" : "📡"} قیمت واقعی
+              </button>
+              {market?.entries?.length ? (
+                <span className="rounded-full border bg-white px-3 py-2 text-xs">
+                  {marketLine}{" "}
+                  <span className={marketStale ? "text-amber-600" : "text-emerald-600"}>
+                    {marketStale ? "• قدیمی" : "• زنده"}
+                  </span>
+                </span>
+              ) : (
+                <span className="rounded-full border bg-white px-3 py-2 text-xs text-slate-500">
+                  قیمت بازار در دسترس نیست
+                </span>
+              )}
+              <button
+                onClick={sendTelegramReport}
+                disabled={busy === "tg"}
+                className="rounded-full bg-[#229ED9] px-3 py-2 text-xs font-bold text-white disabled:opacity-50"
+              >
+                {busy === "tg" ? "⏳" : "📤"} گزارش روزانه به تلگرام
+              </button>
             </div>
+          </header>
 
-            <div className="grid lg:grid-cols-5 gap-4 mt-4">
-              <div className="lg:col-span-3 bg-white rounded-3xl border p-5">
-                <h3 className="font-black">📈 نمودار درآمد USDT (۶ ماه)</h3>
-                <div className="flex items-end gap-3 h-48 mt-6">
-                  {stats?.chart?.map((c: any) => (
-                    <div key={c.m} className="flex-1 text-center">
-                      <div
-                        className="bg-emerald-500 rounded-t-xl mx-auto w-full max-w-[52px]"
-                        style={{ height: `${(c.v / maxChart) * 160}px` }}
-                      ></div>
-                      <p className="text-xs mt-2 font-bold">{fa(c.v)}</p>
-                      <p className="text-[11px] text-slate-400">{c.m}</p>
+          <div className="mt-4 flex gap-2 overflow-x-auto lg:hidden">
+            {nav.map(([k, l]) => (
+              <button
+                key={k}
+                onClick={() => setView(k)}
+                className={`whitespace-nowrap rounded-full px-3 py-2 text-xs font-bold ${
+                  view === k ? "bg-emerald-500 text-black" : "border bg-white"
+                }`}
+              >
+                {l}
+              </button>
+            ))}
+          </div>
+
+          {/* ═══════════════ ساختمان مرکزی ═══════════════ */}
+          {view === "hq" && (
+            <section className="mt-4 space-y-4">
+              <div className="relative overflow-hidden rounded-3xl bg-gradient-to-l from-[#0B1220] via-[#0f1b2e] to-[#081120] p-5 text-white md:p-7">
+                <div className="pointer-events-none absolute -left-16 -top-16 h-52 w-52 rounded-full bg-emerald-500/20 blur-3xl" />
+                <div className="pointer-events-none absolute -bottom-24 right-10 h-52 w-52 rounded-full bg-cyan-500/10 blur-3xl" />
+                <div className="relative flex flex-wrap items-start justify-between gap-5">
+                  <div>
+                    <span className="rounded-full bg-emerald-500 px-3 py-1 text-[10px] font-black text-black">
+                      دفتر مرکزی • مدیرعامل
+                    </span>
+                    <h2 className="mt-3 text-2xl font-black md:text-3xl">ساختمان اداری ایجنت‌ها</h2>
+                    <p className="mt-2 max-w-xl text-xs leading-6 text-slate-300">
+                      هر کارمند یک دفتر مستقل، هدف مشخص و گزارش واقعی دارد. درآمد فقط با شاهد تراکنش یا تأیید شما
+                      ثبت می‌شود؛ هیچ عددی ساختگی نیست.
+                    </p>
+                    <div className="mt-3 flex flex-wrap gap-2 text-[10px]">
+                      <span className="rounded-full border border-white/15 bg-white/5 px-2.5 py-1">
+                        کرون: {stats?.health?.lastCronAt ? relativeTime(stats.health.lastCronAt) : "اجرا نشده"}
+                      </span>
+                      <span className="rounded-full border border-white/15 bg-white/5 px-2.5 py-1">
+                        صرافی: {stats?.health?.exchange || "—"}
+                      </span>
+                      <span className="rounded-full border border-white/15 bg-white/5 px-2.5 py-1">
+                        معامله واقعی: {stats?.health?.trading ? "فعال" : "قفل"}
+                      </span>
                     </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 text-center md:grid-cols-4">
+                    {[
+                      ["درآمد تأییدشده", `${fa(stats?.income ?? 0)}`, "USDT"],
+                      ["در انتظار تأیید", `${fa(stats?.incomePending ?? 0)}`, "USDT"],
+                      ["کارمند فعال", `${fa(agentsList.filter((a) => a.status === "active").length)}`, "نفر"],
+                      ["صف تأیید", `${fa(awaitingJobs.length)}`, "کار"],
+                    ].map(([l, v, u]) => (
+                      <div key={l} className="rounded-2xl border border-white/10 bg-white/5 px-3 py-2 backdrop-blur">
+                        <p className="text-[9px] text-slate-400">{l}</p>
+                        <p className="mt-0.5 text-lg font-black text-emerald-300">
+                          {v}
+                          <span className="mr-1 text-[8px] font-normal text-slate-400">{u}</span>
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* فیلتر دپارتمان */}
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex flex-wrap gap-1.5">
+                  {[
+                    ["all", "همه دفاتر"],
+                    ["crypto", "🪙 بازار سرمایه"],
+                    ["freelance", "⚛️ مهندسی"],
+                    ["bot", "🤖 فروش"],
+                    ["content", "📊 محتوا"],
+                    ["custom_api", "🔌 یکپارچه‌سازی"],
+                  ].map(([k, l]) => (
+                    <button
+                      key={k}
+                      onClick={() => setDept(k)}
+                      className={`rounded-full px-3 py-1.5 text-[11px] font-bold transition ${
+                        dept === k ? "bg-[#0B1220] text-white" : "border bg-white text-slate-600 hover:bg-slate-50"
+                      }`}
+                    >
+                      {l}
+                    </button>
                   ))}
                 </div>
+                <Link
+                  href="/control/system"
+                  className="text-[11px] font-bold text-slate-500 underline decoration-dotted"
+                >
+                  وضعیت زیرساخت و خطاها ←
+                </Link>
               </div>
 
-              <div className="lg:col-span-2 bg-white rounded-3xl border p-5">
-                <h3 className="font-black mb-2">
-                  🤖 سهم ایجنت‌ها در کیف پول واحد
-                </h3>
-                {agentsList.slice(0, 5).map((a) => {
-                  const share = totalFleetEarned
-                    ? Math.round((a.earnedUsdt / totalFleetEarned) * 100)
-                    : 0;
-                  return (
-                    <div key={a.id} className="py-2 border-b last:border-0">
-                      <div className="flex justify-between text-sm">
-                        <span className="truncate font-bold">
-                          {a.avatar} {a.name}
-                        </span>
-                        <b className="text-emerald-600">
-                          {fa(a.earnedUsdt)} USDT ({fa(share)}٪)
-                        </b>
-                      </div>
-                      <div className="h-1.5 bg-slate-100 rounded-full mt-1">
-                        <div
-                          className="h-full bg-emerald-500 rounded-full"
-                          style={{ width: `${share}%` }}
-                        ></div>
-                      </div>
-                    </div>
-                  );
-                })}
+              <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+                {offices.map((a) => (
+                  <OfficeCard
+                    key={a.id}
+                    agent={{
+                      ...a,
+                      lastActiveAt: a.lastActiveAt || byAgent.get(a.name)?.lastAt || null,
+                    }}
+                    todayEarned={byAgent.get(a.name)?.todayEarned || 0}
+                    pendingJobs={pendingJobsByAgent.get(a.id) || 0}
+                  />
+                ))}
+                {offices.length === 0 && (
+                  <div className="col-span-full rounded-3xl border border-dashed bg-white p-10 text-center text-sm text-slate-500">
+                    دفتری در این دپارتمان نیست. از بخش «کارمندان و دفاتر» کارمند جدید استخدام کنید.
+                  </div>
+                )}
               </div>
-            </div>
 
-            <div className="grid lg:grid-cols-2 gap-4 mt-4">
-              <div className="bg-white rounded-3xl border p-5">
-                <h3 className="font-black">✅ تسک‌های منتظر تأیید</h3>
-                {tasks
-                  .filter((t) => t.status === "pending")
-                  .slice(0, 3)
-                  .map((t) => (
-                    <div key={t.id} className="border rounded-2xl p-3 mt-3">
-                      <b>{t.title}</b>
-                      <p className="text-xs text-slate-500 mt-0.5">
-                        {t.agent} • {t.projectTitle}
-                      </p>
-                      <div className="flex gap-2 mt-2">
+              <div className="grid gap-4 lg:grid-cols-2">
+                {/* صف تأیید */}
+                <div className="rounded-3xl border bg-white p-5">
+                  <div className="flex items-center justify-between">
+                    <h3 className="font-black">✅ منتظر تأیید شما</h3>
+                    <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-700">
+                      {fa(awaitingJobs.length + pendingTasks.length)} مورد
+                    </span>
+                  </div>
+                  {awaitingJobs.slice(0, 3).map((j: any) => (
+                    <div key={j.id} className="mt-3 rounded-2xl border p-3">
+                      <div className="flex flex-wrap items-center justify-between gap-1">
+                        <b className="text-xs">{j.title}</b>
+                        <span className="rounded-full border px-2 py-0.5 text-[9px] text-slate-500">{j.kind}</span>
+                      </div>
+                      <p className="mt-1 text-[10px] text-slate-500">{j.agentName}</p>
+                      <div className="mt-2 flex gap-2">
                         <button
-                          onClick={() => actTask(t, "approved")}
-                          className="bg-emerald-500 text-white px-3 py-1 rounded-full text-sm font-bold"
+                          onClick={() => jobAction(j.id, "approve")}
+                          disabled={busy === `job-${j.id}`}
+                          className="rounded-lg bg-emerald-500 px-3 py-1 text-[11px] font-black text-white disabled:opacity-50"
                         >
-                          تأیید ✅
+                          تأیید و اجرا ✅
                         </button>
                         <button
-                          onClick={() => actTask(t, "rejected")}
-                          className="bg-red-50 text-red-600 px-3 py-1 rounded-full text-sm font-bold"
+                          onClick={() => jobAction(j.id, "reject")}
+                          className="rounded-lg bg-red-50 px-3 py-1 text-[11px] font-bold text-red-600"
                         >
                           رد ❌
                         </button>
                       </div>
                     </div>
                   ))}
-                {tasks.filter((t) => t.status === "pending").length === 0 && (
-                  <p className="text-slate-400 mt-4">🎉 تسک منتظری نیست</p>
-                )}
-              </div>
-
-              <div className="bg-white rounded-3xl border p-5">
-                <h3 className="font-black">💬 پیام‌های اخیر تلگرام</h3>
-                {msgs.slice(0, 4).map((m) => (
-                  <div key={m.id} className="py-2 border-b last:border-0">
-                    <b>{m.clientName}</b>{" "}
-                    <span className="text-slate-400 text-xs">{m.username}</span>
-                    <p className="text-sm text-slate-600 truncate">{m.text}</p>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </section>
-        )}
-
-        {/* ==================== ۲. ناوگان ایجنت‌ها و کارمند رمزارز ==================== */}
-        {view === "agents" && (
-          <section className="mt-4 space-y-5">
-            {/* پنل اختصاصی کارمند رمزارز */}
-            {cryptoEmployee && (
-              <div className="bg-gradient-to-l from-[#0B1220] to-[#132238] text-white rounded-3xl p-6 shadow-lg">
-                <div className="flex flex-wrap justify-between items-start gap-4">
-                  <div>
-                    <span className="bg-amber-400 text-black text-xs font-black px-3 py-1 rounded-full">
-                      کارمند تخصصی رمزارز و بلاک‌چین
-                    </span>
-                    <h2 className="text-2xl font-black mt-3">
-                      {cryptoEmployee.avatar} {cryptoEmployee.name}
-                    </h2>
-                    <p className="text-slate-300 text-sm mt-1">
-                      {cryptoEmployee.strategy}
-                    </p>
-                  </div>
-                  <div className="bg-white/10 rounded-2xl p-4 text-left">
-                    <p className="text-xs text-slate-300">
-                      مجموع واریزی به کیف پول واحد
-                    </p>
-                    <p className="text-2xl font-black text-emerald-400 mt-1">
-                      {fa(cryptoEmployee.earnedUsdt)} USDT
-                    </p>
-                    <p className="text-xs text-slate-400">
-                      {fa(cryptoEmployee.tasksCompleted)} مأموریت موفق
-                    </p>
-                  </div>
-                </div>
-
-                <div className="grid md:grid-cols-4 gap-3 mt-5">
-                  <div className="md:col-span-2">
-                    <label className="text-xs text-slate-300 block mb-1">
-                      انتخاب مأموریت کارمند رمزارز:
-                    </label>
-                    <select
-                      value={cryptoStrategy}
-                      onChange={(e) => setCryptoStrategy(e.target.value)}
-                      className="w-full bg-white text-slate-900 rounded-xl p-3 text-sm font-bold"
-                    >
-                      <option value="arbitrage">
-                        ⚡ آربیتراژ صرافی‌ها (DEX/CEX Spread)
-                      </option>
-                      <option value="whale_alert">
-                        🐋 رصد نهنگ‌ها و فروش سیگنال آن‌چین
-                      </option>
-                      <option value="airdrop">
-                        🪂 شکار ایردراپ و پاداش تست‌نت
-                      </option>
-                      <option value="signal_fee">
-                        📈 کارمزد عملکرد ربات کپی‌ترید
-                      </option>
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="text-xs text-slate-300 block mb-1">
-                      سود خالص (اختیاری - USDT):
-                    </label>
-                    <input
-                      type="number"
-                      value={cryptoCustomAmount}
-                      onChange={(e) => setCryptoCustomAmount(e.target.value)}
-                      placeholder="محاسبه هوشمند خودکار"
-                      className="w-full bg-white text-slate-900 rounded-xl p-3 text-sm"
-                    />
-                  </div>
-
-                  <div className="flex items-end">
-                    <button
-                      onClick={() =>
-                        executeAgentPayout(cryptoEmployee, {
-                          strategy: cryptoStrategy,
-                          amountUsdt: cryptoCustomAmount
-                            ? Number(cryptoCustomAmount)
-                            : undefined,
-                        })
-                      }
-                      disabled={runningAgentId === cryptoEmployee.id}
-                      className="w-full bg-emerald-500 hover:bg-emerald-400 text-black font-black py-3 px-4 rounded-xl text-sm transition"
-                    >
-                      {runningAgentId === cryptoEmployee.id
-                        ? "⏳ در حال اجرا..."
-                        : "⚡ اجرا و واریز به کیف پول واحد"}
-                    </button>
-                  </div>
-                </div>
-
-                {cryptoReport && (
-                  <pre className="bg-black/40 border border-emerald-400/30 rounded-2xl p-4 mt-4 text-xs text-emerald-200 whitespace-pre-wrap leading-6">
-                    {cryptoReport}
-                  </pre>
-                )}
-              </div>
-            )}
-
-            {/* فرم تنظیم کیف پول واحد + فرم استخدام کارمند / ساخت API جدید */}
-            <div className="grid lg:grid-cols-2 gap-4">
-              <form
-                onSubmit={saveMasterWallet}
-                className="bg-white border rounded-3xl p-5"
-              >
-                <h3 className="font-black text-lg">
-                  💳 تنظیم کیف پول واحد (مقصد واریز همه ایجنت‌ها)
-                </h3>
-                <p className="text-xs text-slate-500 mt-1">
-                  هر ایجنتی که درآمد کسب کند، به‌صورت خودکار به این کیف پول واریز
-                  می‌کند.
-                </p>
-                <div className="space-y-3 mt-4">
-                  <div>
-                    <label className="text-xs font-bold text-slate-600">
-                      آدرس کیف پول واحد (USDT / TON / EVM)
-                    </label>
-                    <input
-                      required
-                      value={walletForm.address}
-                      onChange={(e) =>
-                        setWalletForm({ ...walletForm, address: e.target.value })
-                      }
-                      className="w-full border rounded-xl p-3 mt-1 font-mono text-sm"
-                      dir="ltr"
-                    />
-                  </div>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="text-xs font-bold text-slate-600">
-                        شبکه واریز
-                      </label>
-                      <select
-                        value={walletForm.network}
-                        onChange={(e) =>
-                          setWalletForm({
-                            ...walletForm,
-                            network: e.target.value,
-                          })
-                        }
-                        className="w-full border rounded-xl p-3 mt-1 text-sm"
-                      >
-                        <option value="USDT-TRC20">USDT-TRC20 (ترون)</option>
-                        <option value="USDT-TON">USDT-TON (تون)</option>
-                        <option value="USDT-BEP20">USDT-BEP20 (بایننس)</option>
-                        <option value="USDT-ERC20">USDT-ERC20 (اتریوم)</option>
-                        <option value="USDC-SOL">USDC-SOL (سولانا)</option>
-                      </select>
+                  {pendingTasks.slice(0, 2).map((t: any) => (
+                    <div key={`t-${t.id}`} className="mt-3 rounded-2xl border p-3">
+                      <b className="text-xs">{t.title}</b>
+                      <p className="mt-1 text-[10px] text-slate-500">{t.agent}</p>
+                      <div className="mt-2 flex gap-2">
+                        <button
+                          onClick={() => actTask(t, "approved")}
+                          className="rounded-lg bg-emerald-500 px-3 py-1 text-[11px] font-black text-white"
+                        >
+                          تأیید ✅
+                        </button>
+                        <button
+                          onClick={() => actTask(t, "rejected")}
+                          className="rounded-lg bg-red-50 px-3 py-1 text-[11px] font-bold text-red-600"
+                        >
+                          رد ❌
+                        </button>
+                      </div>
                     </div>
-                    <div className="flex items-end">
-                      <button className="w-full bg-slate-900 hover:bg-emerald-600 text-white font-bold py-3 rounded-xl text-sm transition">
-                        ذخیره کیف پول واحد ✅
-                      </button>
-                    </div>
+                  ))}
+                  {awaitingJobs.length + pendingTasks.length === 0 && (
+                    <p className="mt-4 rounded-2xl bg-slate-50 p-6 text-center text-xs text-slate-400">
+                      🎉 هیچ موردی منتظر تأیید نیست.
+                    </p>
+                  )}
+                </div>
+
+                {/* فعالیت زنده */}
+                <div className="rounded-3xl border bg-white p-5">
+                  <h3 className="font-black">📡 تابلوی فعالیت واقعی شرکت</h3>
+                  <div className="mt-3 space-y-2">
+                    {activity.slice(0, 6).map((a: any) => (
+                      <div key={a.id} className="flex items-start gap-2 border-b pb-2 last:border-0">
+                        <span
+                          className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${
+                            a.status === "failed" ? "bg-red-400" : a.status === "pending" ? "bg-amber-400" : "bg-emerald-400"
+                          }`}
+                        />
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-[11px] font-bold text-slate-700">{a.action}</p>
+                          <p className="text-[10px] text-slate-400">
+                            {a.agentName} • {relativeTime(a.createdAt)}
+                            {Number(a.rewardUsdt) > 0 && (
+                              <span className="mr-1 font-black text-emerald-600">+{fa(a.rewardUsdt)} USDT</span>
+                            )}
+                          </p>
+                        </div>
+                      </div>
+                    ))}
+                    {activity.length === 0 && (
+                      <p className="rounded-2xl bg-slate-50 p-6 text-center text-xs text-slate-400">
+                        هنوز رویدادی ثبت نشده. با «اسکن واقعی بازار» در دفتر کارمند رمزارز شروع کنید.
+                      </p>
+                    )}
                   </div>
                 </div>
-              </form>
+              </div>
+            </section>
+          )}
 
-              <form
-                onSubmit={createNewAgent}
-                className="bg-white border rounded-3xl p-5"
-              >
-                <h3 className="font-black text-lg">
-                  ➕ استخدام کارمند جدید / ساخت API ایجنت
-                </h3>
-                <p className="text-xs text-slate-500 mt-1">
-                  ایجنت جدید با کلید API اختصاصی ساخته و به کیف پول واحد متصل
-                  می‌شود.
-                </p>
-                <div className="grid grid-cols-2 gap-2 mt-4">
+          {/* ═══════════════ کارمندان و دفاتر ═══════════════ */}
+          {view === "agents" && (
+            <section className="mt-4 space-y-4">
+              <div className="grid gap-4 lg:grid-cols-2">
+                <form onSubmit={saveMasterWallet} className="rounded-3xl border bg-white p-5">
+                  <h3 className="font-black">💳 کیف پول واحد (مقصد واریز همه کارمندان)</h3>
+                  <p className="mt-1 text-[11px] text-slate-500">
+                    هر درآمد تأییدشده به این آدرس و شبکه نسبت داده می‌شود.
+                  </p>
                   <input
                     required
-                    value={newAgent.name}
-                    onChange={(e) =>
-                      setNewAgent({ ...newAgent, name: e.target.value })
-                    }
-                    placeholder="نام ایجنت (مثلاً: ربات ترید سولانا)"
-                    className="border rounded-xl p-2.5 text-sm col-span-2"
-                  />
-                  <input
-                    value={newAgent.role}
-                    onChange={(e) =>
-                      setNewAgent({ ...newAgent, role: e.target.value })
-                    }
-                    placeholder="نقش (مثلاً: شکارچی آربیتراژ DEX)"
-                    className="border rounded-xl p-2.5 text-sm"
-                  />
-                  <select
-                    value={newAgent.specialty}
-                    onChange={(e) =>
-                      setNewAgent({ ...newAgent, specialty: e.target.value })
-                    }
-                    className="border rounded-xl p-2.5 text-sm"
-                  >
-                    <option value="crypto">🪙 کارمند رمزارز / ترید</option>
-                    <option value="custom_api">🔌 وب‌هوک / API خارجی</option>
-                    <option value="freelance">⚛️ پروژه فنی / کدنویسی</option>
-                    <option value="bot">🤖 ایجنت فروش تلگرام</option>
-                    <option value="content">📊 محتوا و ترجمه</option>
-                  </select>
-                  <input
-                    value={newAgent.strategy}
-                    onChange={(e) =>
-                      setNewAgent({ ...newAgent, strategy: e.target.value })
-                    }
-                    placeholder="استراتژی درآمدزایی..."
-                    className="border rounded-xl p-2.5 text-sm col-span-2"
-                  />
-                </div>
-                <button className="w-full bg-emerald-500 hover:bg-emerald-600 text-white font-bold py-2.5 rounded-xl mt-3 text-sm">
-                  ساخت ایجنت و تولید کلید API ⚡
-                </button>
-              </form>
-            </div>
-
-            {/* کارت‌های ناوگان ایجنت‌ها */}
-            <div>
-              <h3 className="font-black text-lg mb-3">
-                🤖 ناوگان ایجنت‌های متصل به کیف پول واحد ({fa(agentsList.length)})
-              </h3>
-              <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-4">
-                {agentsList.map((ag) => (
-                  <article
-                    key={ag.id}
-                    className="bg-white border rounded-3xl p-5 flex flex-col justify-between"
-                  >
-                    <div>
-                      <div className="flex justify-between items-center gap-2">
-                        <span
-                          className={`text-xs font-bold px-2.5 py-1 rounded-full ${
-                            specialtyMap[ag.specialty]?.[1] ||
-                            "bg-slate-100 text-slate-700"
-                          }`}
-                        >
-                          {specialtyMap[ag.specialty]?.[0] || ag.specialty}
-                        </span>
-                        <button
-                          onClick={() => toggleAgentStatus(ag)}
-                          className={`text-xs font-bold px-2.5 py-1 rounded-full ${
-                            ag.status === "active"
-                              ? "bg-emerald-100 text-emerald-700"
-                              : "bg-slate-100 text-slate-500"
-                          }`}
-                        >
-                          {ag.status === "active" ? "● فعال" : "⏸ متوقف"}
-                        </button>
-                      </div>
-
-                      <h4 className="font-black text-lg mt-3">
-                        {ag.avatar} {ag.name}
-                      </h4>
-                      <p className="text-xs text-slate-500 mt-1">{ag.role}</p>
-                      <p className="text-xs text-slate-600 mt-2 line-clamp-2">
-                        {ag.strategy}
-                      </p>
-
-                      <div className="bg-slate-50 rounded-2xl p-3 mt-3 flex justify-between items-center">
-                        <div>
-                          <p className="text-[11px] text-slate-400">
-                            درآمد واریزشده
-                          </p>
-                          <p className="text-lg font-black text-emerald-600">
-                            {fa(ag.earnedUsdt)} USDT
-                          </p>
-                        </div>
-                        <div className="text-left">
-                          <p className="text-[11px] text-slate-400">مأموریت‌ها</p>
-                          <p className="font-black">{fa(ag.tasksCompleted)}</p>
-                        </div>
-                      </div>
-
-                      <div
-                        onClick={() =>
-                          copyText(
-                            ag.apiKey,
-                            `کلید API ایجنت «${ag.name}» کپی شد 🔑`
-                          )
-                        }
-                        className="mt-2 bg-slate-100 hover:bg-slate-200 cursor-pointer rounded-xl px-3 py-1.5 text-[11px] font-mono flex justify-between items-center"
-                        dir="ltr"
-                      >
-                        <span className="truncate">{ag.apiKey}</span>
-                        <span className="text-emerald-700 font-bold ml-2">
-                          Copy Key
-                        </span>
-                      </div>
-                    </div>
-
-                    <div className="flex gap-2 mt-4">
-                      <button
-                        onClick={() => executeAgentPayout(ag)}
-                        disabled={runningAgentId === ag.id}
-                        className="flex-1 bg-emerald-500 hover:bg-emerald-600 text-white font-bold py-2 rounded-xl text-xs"
-                      >
-                        {runningAgentId === ag.id
-                          ? "⏳ اجرا..."
-                          : "⚡ اجرای مأموریت (+USDT)"}
-                      </button>
-                      <button
-                        onClick={() => setSelectedApiAgent(ag)}
-                        className="px-3 bg-slate-900 text-white rounded-xl text-xs font-bold"
-                      >
-                        🔌 API
-                      </button>
-                      <button
-                        onClick={() => deleteAgent(ag.id)}
-                        className="px-2.5 bg-red-50 text-red-600 rounded-xl text-xs"
-                      >
-                        🗑️
-                      </button>
-                    </div>
-                  </article>
-                ))}
-              </div>
-            </div>
-
-            {/* راهنمای زنده API اتصال ایجنت خارجی */}
-            <div className="bg-slate-900 text-white rounded-3xl p-6">
-              <div className="flex flex-wrap justify-between items-center gap-2">
-                <div>
-                  <h3 className="font-black text-lg">
-                    🔌 اندپوینت اتصال ایجنت‌های خارجی به کیف پول واحد
-                  </h3>
-                  <p className="text-xs text-slate-300 mt-1">
-                    هر ربات پایتون، TradingView، n8n یا سرویس خارجی می‌تواند با
-                    این API سود خود را مستقیم به کیف پول واحد شما واریز کند.
-                  </p>
-                </div>
-                <span
-                  className="bg-emerald-500 text-black px-3 py-1 rounded-full text-xs font-mono font-bold"
-                  dir="ltr"
-                >
-                  POST {originUrl}/api/agents/ingest
-                </span>
-              </div>
-
-              <pre
-                className="bg-black/50 border border-white/10 rounded-2xl p-4 mt-4 text-xs text-emerald-300 overflow-x-auto"
-                dir="ltr"
-              >{`curl -X POST ${originUrl}/api/agents/ingest \\
-  -H "Content-Type: application/json" \\
-  -H "x-agent-key: ${
-    selectedApiAgent?.apiKey ||
-    cryptoEmployee?.apiKey ||
-    "ag_live_crypto_arya_9821"
-  }" \\
-  -d '{
-    "amountUsdt": 75,
-    "title": "سود ربات آربیتراژ / سیگنال کریپتو",
-    "strategy": "arbitrage"
-  }'`}</pre>
-            </div>
-          </section>
-        )}
-
-        {/* ==================== ۳. پروژه‌ها (CRUD) ==================== */}
-        {view === "projects" && (
-          <section className="mt-4">
-            <div className="flex flex-wrap gap-2">
-              <input
-                value={q}
-                onChange={(e) => setQ(e.target.value)}
-                placeholder="🔍 جستجو پروژه، مشتری، تلگرام..."
-                className="bg-white border rounded-full px-4 py-2 flex-1 min-w-[200px]"
-              />
-              <select
-                value={filter}
-                onChange={(e) => setFilter(e.target.value)}
-                className="bg-white border rounded-full px-3 py-2"
-              >
-                <option value="all">همه وضعیت‌ها</option>
-                {Object.entries(statusMap).map(([k, v]) => (
-                  <option key={k} value={k}>
-                    {v[0]}
-                  </option>
-                ))}
-              </select>
-              <button
-                onClick={() => {
-                  setEdit(null);
-                  setForm({
-                    title: "",
-                    clientName: "",
-                    telegramUser: "",
-                    source: "تلگرام",
-                    type: "nextjs",
-                    status: "new",
-                    priority: "medium",
-                    budgetUsdt: "",
-                    receivedUsdt: "",
-                    deadline: "",
-                    description: "",
-                    wallet: walletForm.address,
-                  });
-                  setShowForm(true);
-                }}
-                className="bg-emerald-500 text-white px-5 py-2 rounded-full font-bold"
-              >
-                + پروژه جدید
-              </button>
-            </div>
-
-            {filtered.length === 0 ? (
-              <div className="bg-white rounded-3xl border p-12 text-center mt-4">
-                <div className="text-5xl">📭</div>
-                <p className="font-bold mt-3">پروژه‌ای پیدا نشد</p>
-                <p className="text-slate-400 text-sm">
-                  فیلتر را عوض کنید یا پروژه جدید بسازید
-                </p>
-              </div>
-            ) : (
-              <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-4 mt-4">
-                {filtered.map((p) => {
-                  const pct = p.budgetUsdt
-                    ? Math.round((p.receivedUsdt / p.budgetUsdt) * 100)
-                    : 0;
-                  return (
-                    <article key={p.id} className="bg-white rounded-3xl border p-5">
-                      <div className="flex justify-between">
-                        <span
-                          className={`px-2 py-1 rounded-full text-xs font-bold ${
-                            statusMap[p.status]?.[1]
-                          }`}
-                        >
-                          {statusMap[p.status]?.[0]}
-                        </span>
-                        <span className="text-xs bg-slate-100 px-2 py-1 rounded-full">
-                          {typeMap[p.type]}
-                        </span>
-                      </div>
-                      <h3 className="font-black mt-3 leading-7">{p.title}</h3>
-                      <p className="text-sm text-slate-500">
-                        {p.clientName} •{" "}
-                        <span dir="ltr">{p.telegramUser}</span>
-                      </p>
-                      <p className="text-sm text-slate-600 mt-2 line-clamp-2">
-                        {p.description}
-                      </p>
-                      <div className="mt-3">
-                        <div className="flex justify-between text-sm">
-                          <span>
-                            💰 {fa(p.receivedUsdt)} / {fa(p.budgetUsdt)} USDT
-                          </span>
-                          <b>{fa(pct)}٪</b>
-                        </div>
-                        <div className="h-2 bg-slate-100 rounded-full mt-1">
-                          <div
-                            className="h-full bg-emerald-500 rounded-full"
-                            style={{ width: pct + "%" }}
-                          ></div>
-                        </div>
-                      </div>
-                      <p className="text-xs text-slate-400 mt-2">
-                        📅 ددلاین: {p.deadline || "—"} • منبع: {p.source}
-                      </p>
-                      <div className="flex gap-2 mt-4">
-                        <button
-                          onClick={() => {
-                            setEdit(p);
-                            setForm(p);
-                            setShowForm(true);
-                          }}
-                          className="flex-1 bg-slate-900 text-white py-2 rounded-xl text-sm font-bold"
-                        >
-                          ویرایش
-                        </button>
-                        <button
-                          onClick={() => {
-                            const ns = prompt(
-                              "وضعیت جدید: new, negotiating, approved, in_progress, delivered, paid",
-                              p.status
-                            );
-                            if (ns) {
-                              fetch("/api/projects", {
-                                method: "PUT",
-                                headers: { "Content-Type": "application/json" },
-                                body: JSON.stringify({ ...p, status: ns }),
-                              }).then(() => load());
-                            }
-                          }}
-                          className="flex-1 bg-amber-100 text-amber-800 py-2 rounded-xl text-sm font-bold"
-                        >
-                          تغییر وضعیت
-                        </button>
-                        <button
-                          onClick={() => delProject(p.id)}
-                          className="px-3 bg-red-50 text-red-600 rounded-xl"
-                        >
-                          🗑️
-                        </button>
-                      </div>
-                    </article>
-                  );
-                })}
-              </div>
-            )}
-          </section>
-        )}
-
-        {/* ==================== ۴. گفتگوها ==================== */}
-        {view === "chats" && (
-          <section className="grid lg:grid-cols-3 gap-4 mt-4">
-            <div className="bg-white rounded-3xl border p-4">
-              <h3 className="font-black mb-3">گفتگوها</h3>
-              {chatList.map((c) => (
-                <button
-                  key={c.id}
-                  onClick={() => setChatUser(c.clientName)}
-                  className={`w-full text-right p-3 rounded-2xl mb-1 ${
-                    chatUser === c.clientName
-                      ? "bg-emerald-50 border border-emerald-200"
-                      : "hover:bg-slate-50"
-                  }`}
-                >
-                  <b>{c.clientName}</b>
-                  {c.status === "unread" && (
-                    <span className="bg-red-500 text-white text-[10px] px-2 rounded-full float-left">
-                      جدید
-                    </span>
-                  )}
-                  <p className="text-xs text-slate-400">
-                    {c.username} • تلگرام
-                  </p>
-                </button>
-              ))}
-            </div>
-
-            <div className="lg:col-span-2 bg-white rounded-3xl border p-4 flex flex-col min-h-[520px]">
-              <h3 className="font-black">
-                {chatUser}{" "}
-                <span className="text-emerald-500 text-sm">
-                  ● آنلاین از تلگرام
-                </span>
-              </h3>
-              <div className="flex-1 space-y-3 mt-4 overflow-y-auto">
-                {chatMsgs.map((m) => (
-                  <div
-                    key={m.id}
-                    className={`max-w-[80%] p-3 rounded-2xl text-sm ${
-                      m.direction === "out"
-                        ? "bg-emerald-500 text-white mr-auto rounded-bl-md"
-                        : "bg-slate-100 ml-auto rounded-br-md"
-                    }`}
-                  >
-                    {m.text}
-                    <p
-                      className={`text-[10px] mt-1 ${
-                        m.direction === "out"
-                          ? "text-emerald-100"
-                          : "text-slate-400"
-                      }`}
-                    >
-                      {m.direction === "out"
-                        ? "شما • از پنل"
-                        : "تلگرام • Webhook"}
-                    </p>
-                  </div>
-                ))}
-                {chatMsgs.length === 0 && (
-                  <p className="text-center text-slate-400">
-                    پیامی نیست — اولین پیام را بفرستید
-                  </p>
-                )}
-              </div>
-              <div className="flex gap-2 mt-4">
-                <input
-                  value={chatText}
-                  onChange={(e) => setChatText(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && sendChat()}
-                  placeholder="پیام به مشتری از طریق ربات..."
-                  className="flex-1 border rounded-full px-4 py-3"
-                />
-                <button
-                  onClick={sendChat}
-                  className="bg-emerald-500 text-white px-6 rounded-full font-bold"
-                >
-                  ارسال 📩
-                </button>
-              </div>
-            </div>
-          </section>
-        )}
-
-        {/* ==================== ۵. تأیید انسانی ==================== */}
-        {view === "approvals" && (
-          <section className="mt-4 space-y-3">
-            {tasks.map((t) => (
-              <div key={t.id} className="bg-white rounded-3xl border p-5">
-                <div className="flex flex-wrap justify-between gap-2">
-                  <b>{t.title}</b>
-                  <span
-                    className={`px-2 py-1 rounded-full text-xs font-bold ${
-                      t.status === "pending"
-                        ? "bg-amber-100 text-amber-700"
-                        : t.status === "approved"
-                        ? "bg-emerald-100 text-emerald-700"
-                        : "bg-red-100 text-red-600"
-                    }`}
-                  >
-                    {t.status === "pending"
-                      ? "⏳ منتظر تأیید شما"
-                      : t.status === "approved"
-                      ? "✅ تأیید شده"
-                      : "❌ رد شده"}
-                  </span>
-                </div>
-                <p className="text-sm text-slate-500 mt-1">
-                  {t.agent} • {t.projectTitle} • ریسک:{" "}
-                  {t.risk === "high"
-                    ? "🔴 بالا"
-                    : t.risk === "low"
-                    ? "🟢 کم"
-                    : "🟡 متوسط"}
-                </p>
-                <p className="text-sm mt-2">{t.description}</p>
-                {t.payload && (
-                  <pre className="bg-slate-50 border rounded-2xl p-3 text-xs whitespace-pre-wrap mt-3">
-                    {t.payload}
-                  </pre>
-                )}
-                {t.status === "pending" && (
-                  <div className="flex gap-2 mt-4 flex-wrap">
-                    <button
-                      onClick={() => actTask(t, "approved")}
-                      className="bg-emerald-500 text-white px-5 py-2 rounded-full font-bold"
-                    >
-                      ✅ تأیید و اجرا
-                    </button>
-                    <button
-                      onClick={() => actTask(t, "rejected")}
-                      className="bg-red-500 text-white px-5 py-2 rounded-full font-bold"
-                    >
-                      ❌ رد
-                    </button>
-                    <button
-                      onClick={() => {
-                        const v = prompt("ویرایش متن ایجنت:", t.payload);
-                        if (v) {
-                          setTasks((prev) =>
-                            prev.map((x) =>
-                              x.id === t.id ? { ...x, payload: v } : x
-                            )
-                          );
-                          notify("متن ویرایش شد ✏️");
-                        }
-                      }}
-                      className="border px-5 py-2 rounded-full font-bold"
-                    >
-                      ✏️ ویرایش قبل از تأیید
-                    </button>
-                  </div>
-                )}
-              </div>
-            ))}
-          </section>
-        )}
-
-        {/* ==================== ۶. کیف پول واحد و درآمد USDT ==================== */}
-        {view === "earnings" && (
-          <section className="mt-4">
-            <div className="bg-[#0B1220] text-white rounded-3xl p-5 mb-4 flex flex-wrap justify-between items-center gap-3">
-              <div>
-                <p className="text-xs text-emerald-300 font-bold">
-                  💳 مقصد تجمیع تمام واریزی‌ها (کیف پول واحد)
-                </p>
-                <p className="font-mono text-sm md:text-base mt-1" dir="ltr">
-                  {walletForm.address} ({walletForm.network})
-                </p>
-              </div>
-              <button
-                onClick={() => setView("agents")}
-                className="bg-emerald-500 text-black px-4 py-2 rounded-xl text-xs font-bold"
-              >
-                تغییر آدرس کیف پول واحد
-              </button>
-            </div>
-
-            <div className="grid grid-cols-3 gap-4">
-              {[
-                ["کل واریزی به کیف پول واحد", fa(stats?.income)],
-                ["درآمد ناوگان ایجنت‌ها", fa(totalFleetEarned)],
-                ["در انتظار وصول پروژه‌ها", fa(stats?.pendingAmount)],
-              ].map(([l, v]) => (
-                <div
-                  key={l}
-                  className="bg-white border rounded-3xl p-5 text-center"
-                >
-                  <p className="text-slate-500 text-sm">{l}</p>
-                  <p className="text-2xl font-black text-emerald-600 mt-1">
-                    {v} USDT
-                  </p>
-                </div>
-              ))}
-            </div>
-
-            <form
-              onSubmit={addTx}
-              className="bg-white border rounded-3xl p-4 mt-4 grid md:grid-cols-5 gap-2"
-            >
-              <input
-                required
-                value={txForm.title}
-                onChange={(e) =>
-                  setTxForm({ ...txForm, title: e.target.value })
-                }
-                placeholder="عنوان تراکنش"
-                className="border rounded-xl p-2"
-              />
-              <input
-                value={txForm.agentName}
-                onChange={(e) =>
-                  setTxForm({ ...txForm, agentName: e.target.value })
-                }
-                placeholder="نام ایجنت واریزکننده"
-                className="border rounded-xl p-2"
-              />
-              <input
-                required
-                type="number"
-                value={txForm.amountUsdt}
-                onChange={(e) =>
-                  setTxForm({ ...txForm, amountUsdt: e.target.value })
-                }
-                placeholder="مبلغ USDT"
-                className="border rounded-xl p-2"
-              />
-              <select
-                value={txForm.network}
-                onChange={(e) =>
-                  setTxForm({ ...txForm, network: e.target.value })
-                }
-                className="border rounded-xl p-2"
-              >
-                <option>TRC20</option>
-                <option>TON</option>
-                <option>BEP20</option>
-                <option>ERC20</option>
-              </select>
-              <button className="bg-emerald-500 text-white rounded-xl font-bold">
-                + ثبت واریزی
-              </button>
-            </form>
-
-            <div className="bg-white border rounded-3xl mt-4 overflow-hidden">
-              {txs.map((t) => (
-                <div
-                  key={t.id}
-                  className="flex flex-wrap justify-between items-center gap-2 p-4 border-b last:border-0"
-                >
-                  <div>
-                    <b>{t.title}</b>
-                    <p className="text-xs text-slate-500 mt-0.5">
-                      🤖 واریز از:{" "}
-                      <span className="font-bold text-slate-700">
-                        {t.agentName || "سیستم مرکزی"}
-                      </span>{" "}
-                      ← مقصد:{" "}
-                      <span dir="ltr" className="font-mono">
-                        {(t.destinationWallet || walletForm.address).slice(
-                          0,
-                          12
-                        )}
-                        ...
-                      </span>{" "}
-                      • {t.network} • <span dir="ltr">{t.txHash}</span>
-                    </p>
-                  </div>
-                  <div className="text-left">
-                    <b
-                      className={
-                        t.amountUsdt >= 0
-                          ? "text-emerald-600"
-                          : "text-red-500"
-                      }
-                    >
-                      {t.amountUsdt >= 0 ? "+" : ""}
-                      {fa(t.amountUsdt)} USDT
-                    </b>
-                    <p className="text-xs">
-                      {t.status === "confirmed"
-                        ? "✅ تأیید شبکه"
-                        : "⏳ در انتظار"}
-                    </p>
-                  </div>
-                  <button
-                    onClick={async () => {
-                      setTxs((prev) => prev.filter((x) => x.id !== t.id));
-                      await fetch(
-                        `/api/rest?type=transactions&id=${t.id}`,
-                        { method: "DELETE" }
-                      );
-                    }}
-                    className="text-red-500"
-                  >
-                    🗑️
-                  </button>
-                </div>
-              ))}
-            </div>
-          </section>
-        )}
-
-        {/* ==================== ۷. ابزارهای خودکار ==================== */}
-        {view === "tools" && (
-          <section className="mt-4">
-            <div className="bg-white border rounded-3xl p-5">
-              <input
-                value={toolInput}
-                onChange={(e) => setToolInput(e.target.value)}
-                placeholder="موضوع پروژه / متن..."
-                className="w-full border rounded-2xl p-3"
-              />
-              <div className="grid md:grid-cols-3 gap-3 mt-4">
-                {[
-                  ["⚛️ سازنده Next.js", "Next.js"],
-                  ["📊 سازنده PPTX", "PPT"],
-                  ["🌐 مترجم FA→EN", "مترجم"],
-                ].map(([l, k]) => (
-                  <button
-                    key={k}
-                    onClick={() => runTool(k)}
-                    className="bg-[#0B1220] text-white rounded-2xl p-5 font-bold hover:bg-emerald-600"
-                  >
-                    {l}
-                    <p className="text-xs font-normal text-slate-300 mt-1">
-                      اجرای خودکار توسط ایجنت
-                    </p>
-                  </button>
-                ))}
-              </div>
-              {toolOut && (
-                <pre className="bg-emerald-50 border border-emerald-200 rounded-2xl p-4 whitespace-pre-wrap text-sm mt-4">
-                  {toolOut}
-                </pre>
-              )}
-            </div>
-            <h3 className="font-black mt-6 mb-3">اجراهای اخیر</h3>
-            {tools.map((t) => (
-              <div key={t.id} className="bg-white border rounded-2xl p-4 mb-2">
-                <b>{t.tool}</b>
-                <p className="text-sm text-slate-500">{t.input}</p>
-                <p className="text-sm mt-1 whitespace-pre-wrap">{t.output}</p>
-              </div>
-            ))}
-          </section>
-        )}
-
-        {/* ==================== ۸. تلگرام و Webhook ==================== */}
-        {view === "telegram" && (
-          <section className="grid lg:grid-cols-2 gap-4 mt-4">
-            <div className="bg-white border rounded-3xl p-6">
-              <h3 className="font-black text-lg">📩 ربات تلگرام</h3>
-              <div className="space-y-3 mt-4 text-sm">
-                <p>
-                  🤖 ربات: <b dir="ltr">@FreelanceAgentBot</b>{" "}
-                  <span className="text-emerald-600">● متصل</span>
-                </p>
-                <p>
-                  🔗 Webhook:{" "}
-                  <span
+                    value={walletForm.address}
+                    onChange={(e) => setWalletForm({ ...walletForm, address: e.target.value })}
+                    placeholder="آدرس USDT"
                     dir="ltr"
-                    className="bg-slate-100 px-2 py-1 rounded text-xs"
-                  >
-                    {originUrl}/api/telegram/webhook
-                  </span>
+                    className="mt-3 w-full rounded-xl border p-3 font-mono text-sm"
+                  />
+                  <div className="mt-2 grid grid-cols-2 gap-2">
+                    <select
+                      value={walletForm.network}
+                      onChange={(e) => setWalletForm({ ...walletForm, network: e.target.value })}
+                      className="rounded-xl border p-3 text-sm"
+                    >
+                      {["USDT-TRC20", "USDT-TON", "USDT-BEP20", "USDT-ERC20"].map((n) => (
+                        <option key={n}>{n}</option>
+                      ))}
+                    </select>
+                    <button className="rounded-xl bg-slate-900 py-3 text-sm font-bold text-white hover:bg-emerald-600">
+                      ذخیره ✅
+                    </button>
+                  </div>
+                  <div className="mt-3 grid grid-cols-3 gap-2 text-center text-[10px]">
+                    <div className="rounded-xl bg-slate-50 p-2">
+                      <p className="text-slate-500">تأییدشده</p>
+                      <b className="text-emerald-600">{fa(walletInfo?.confirmedDeposits ?? 0)}</b>
+                    </div>
+                    <div className="rounded-xl bg-slate-50 p-2">
+                      <p className="text-slate-500">در انتظار</p>
+                      <b className="text-amber-600">{fa(walletInfo?.pendingDeposits ?? 0)}</b>
+                    </div>
+                    <div className="rounded-xl bg-slate-50 p-2">
+                      <p className="text-slate-500">موجودی صرافی</p>
+                      <b className="text-slate-700">
+                        {walletInfo?.exchange?.balance?.[0]?.total !== undefined
+                          ? fa(walletInfo.exchange.balance[0].total)
+                          : "—"}
+                      </b>
+                    </div>
+                  </div>
+                </form>
+
+                <form onSubmit={createNewAgent} className="rounded-3xl border bg-white p-5">
+                  <h3 className="font-black">➕ استخدام کارمند و افتتاح دفتر جدید</h3>
+                  <p className="mt-1 text-[11px] text-slate-500">
+                    برای کارمند جدید کلید API واقعی ساخته می‌شود و درآمدش از صفر شروع می‌شود.
+                  </p>
+                  <div className="mt-3 grid grid-cols-2 gap-2">
+                    <input
+                      required
+                      value={newAgent.name}
+                      onChange={(e) => setNewAgent({ ...newAgent, name: e.target.value })}
+                      placeholder="نام کارمند"
+                      className="col-span-2 rounded-xl border p-2.5 text-sm"
+                    />
+                    <input
+                      value={newAgent.role}
+                      onChange={(e) => setNewAgent({ ...newAgent, role: e.target.value })}
+                      placeholder="نقش سازمانی"
+                      className="col-span-2 rounded-xl border p-2.5 text-sm"
+                    />
+                    <select
+                      value={newAgent.specialty}
+                      onChange={(e) => setNewAgent({ ...newAgent, specialty: e.target.value })}
+                      className="rounded-xl border p-2.5 text-sm"
+                    >
+                      <option value="crypto">🪙 رمزارز</option>
+                      <option value="freelance">⚛️ فریلنسری</option>
+                      <option value="bot">🤖 فروش تلگرام</option>
+                      <option value="content">📊 محتوا</option>
+                      <option value="custom_api">🔌 API خارجی</option>
+                    </select>
+                    <input
+                      value={newAgent.department}
+                      onChange={(e) => setNewAgent({ ...newAgent, department: e.target.value })}
+                      placeholder="دپارتمان"
+                      className="rounded-xl border p-2.5 text-sm"
+                    />
+                    <input
+                      value={newAgent.goalTitle}
+                      onChange={(e) => setNewAgent({ ...newAgent, goalTitle: e.target.value })}
+                      placeholder="هدف ماه (مثلاً ۱۰ قرارداد)"
+                      className="col-span-2 rounded-xl border p-2.5 text-sm"
+                    />
+                    <input
+                      type="number"
+                      value={newAgent.goalTargetUsdt}
+                      onChange={(e) => setNewAgent({ ...newAgent, goalTargetUsdt: e.target.value })}
+                      placeholder="هدف درآمدی USDT"
+                      className="col-span-2 rounded-xl border p-2.5 text-sm"
+                    />
+                  </div>
+                  <button className="mt-3 w-full rounded-xl bg-emerald-500 py-3 text-sm font-black text-black hover:bg-emerald-400">
+                    استخدام و ساخت دفتر ✅
+                  </button>
+                </form>
+              </div>
+
+              <div className="overflow-hidden rounded-3xl border bg-white">
+                <table className="w-full min-w-[820px] text-right text-xs">
+                  <thead className="bg-slate-50 text-[11px] text-slate-500">
+                    <tr>
+                      {["کارمند", "دپارتمان / اتاق", "هدف", "درآمد", "موفق/خطا", "وضعیت", "کلید API", "عملیات"].map((h) => (
+                        <th key={h} className="px-3 py-3 font-normal">{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {agentsList.map((a) => (
+                      <tr key={a.id} className="border-t">
+                        <td className="px-3 py-3">
+                          <div className="flex items-center gap-2">
+                            <span className="text-lg">{a.avatar}</span>
+                            <div>
+                              <b>{a.name}</b>
+                              <p className="text-[10px] text-slate-400">{a.role}</p>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="px-3 py-3 text-[10px] text-slate-500">
+                          {a.department || "—"}
+                          <br />
+                          اتاق {a.officeRoom || "—"} / طبقه {a.officeFloor}
+                        </td>
+                        <td className="max-w-[180px] px-3 py-3 text-[10px] text-slate-500">
+                          <p className="line-clamp-2">{a.goalTitle || "—"}</p>
+                        </td>
+                        <td className="px-3 py-3 font-black text-emerald-600">{fa(a.earnedUsdt)}</td>
+                        <td className="px-3 py-3 text-[10px]">
+                          <span className="text-emerald-600">{a.successCount}</span> /{" "}
+                          <span className="text-red-500">{a.errorCount}</span>
+                        </td>
+                        <td className="px-3 py-3">
+                          <span
+                            className={`rounded-full px-2 py-0.5 text-[9px] font-bold ${
+                              a.status === "active" ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-500"
+                            }`}
+                          >
+                            {a.status === "active" ? "سر کار" : "متوقف"}
+                          </span>
+                        </td>
+                        <td className="px-3 py-3">
+                          <button
+                            onClick={() => copyText(a.apiKey, "کلید API کپی شد 🔑")}
+                            className="rounded-lg bg-slate-100 px-2 py-1 font-mono text-[9px]"
+                            dir="ltr"
+                          >
+                            {String(a.apiKey).slice(0, 12)}…
+                          </button>
+                        </td>
+                        <td className="px-3 py-3">
+                          <div className="flex flex-wrap gap-1">
+                            <Link
+                              href={`/control/office/${a.id}`}
+                              className="rounded-lg bg-[#0B1220] px-2 py-1 text-[10px] font-bold text-white"
+                            >
+                              ورود به دفتر
+                            </Link>
+                            <button onClick={() => toggleAgent(a)} className="rounded-lg bg-slate-100 px-2 py-1 text-[10px]">
+                              {a.status === "active" ? "توقف" : "فعال"}
+                            </button>
+                            <button
+                              onClick={() => deleteAgent(a.id)}
+                              className="rounded-lg bg-red-50 px-2 py-1 text-[10px] text-red-600"
+                            >
+                              حذف
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="rounded-3xl border bg-white p-5">
+                <h3 className="font-black">🔌 اتصال ایجنت خارجی به API واقعی</h3>
+                <p className="mt-1 text-[11px] text-slate-500">
+                  ربات پایتون/TradingView/n8n خود را با کلید اختصاصی به این مسیر وصل کنید. بدون هش تراکنش، هیچ مبلغی
+                  «درآمد» محسوب نمی‌شود.
                 </p>
-                <p>
-                  💳 کیف پول واحد:{" "}
-                  <span dir="ltr">
-                    {walletForm.address} ({walletForm.network})
-                  </span>
+                <pre className="mt-3 overflow-x-auto rounded-2xl bg-[#0B1220] p-4 text-[10px] leading-6 text-emerald-200" dir="ltr">
+{`curl -X POST ${typeof window !== "undefined" ? window.location.origin : "https://YOUR-APP.vercel.app"}/api/agents/ingest \\
+  -H "Content-Type: application/json" \\
+  -H "x-agent-key: ag_live_xxxxxxxx" \\
+  -d '{
+    "amountUsdt": 55.25,
+    "txHash": "0x9f41c0d2b7a8e6f5d4c3b2a1908f7e6d5c4b3a2910f8e7d6c5b4a39281706f5e",
+    "network": "BEP20",
+    "title": "سود واقعی آربیتراژ"
+  }'`}
+                </pre>
+                <p className="mt-2 text-[10px] text-slate-500">
+                  اگر تأیید زنجیره‌ای فعال باشد، واریز بلافاصله تأیید می‌شود؛ در غیر این صورت در صف تأیید مدیرعامل قرار
+                  می‌گیرد و به تلگرام ارسال می‌شود.
                 </p>
               </div>
-              <div className="flex gap-2 mt-5 flex-wrap">
+            </section>
+          )}
+
+          {/* ═══════════════ پروژه‌ها ═══════════════ */}
+          {view === "projects" && (
+            <section className="mt-4">
+              <div className="flex flex-wrap items-center gap-2">
+                <input
+                  value={q}
+                  onChange={(e) => setQ(e.target.value)}
+                  placeholder="جستجوی پروژه یا مشتری…"
+                  className="min-w-[220px] flex-1 rounded-xl border bg-white px-3 py-2 text-sm"
+                />
+                <select value={filter} onChange={(e) => setFilter(e.target.value)} className="rounded-xl border bg-white px-3 py-2 text-sm">
+                  <option value="all">همه وضعیت‌ها</option>
+                  {Object.keys(statusMap).map((s) => (
+                    <option key={s} value={s}>{statusMap[s][0]}</option>
+                  ))}
+                </select>
                 <button
-                  onClick={simulateWebhook}
-                  className="bg-[#229ED9] text-white px-5 py-2 rounded-full font-bold"
+                  onClick={() => {
+                    setEdit(null);
+                    setForm({ title: "", clientName: "", telegramUser: "", source: "تلگرام", type: "nextjs", status: "new", priority: "medium", budgetUsdt: "", receivedUsdt: "", deadline: "", description: "", wallet: walletForm.address });
+                    setShowForm(true);
+                  }}
+                  className="rounded-xl bg-emerald-500 px-4 py-2 text-sm font-black text-black"
                 >
-                  شبیه‌سازی پیام جدید
+                  + پروژه جدید
                 </button>
+              </div>
+
+              {showForm && (
+                <form onSubmit={saveProject} className="mt-3 grid gap-2 rounded-3xl border bg-white p-4 md:grid-cols-3">
+                  <input required value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder="عنوان پروژه" className="rounded-xl border p-2.5 text-sm md:col-span-2" />
+                  <input required value={form.clientName} onChange={(e) => setForm({ ...form, clientName: e.target.value })} placeholder="نام مشتری" className="rounded-xl border p-2.5 text-sm" />
+                  <input value={form.telegramUser} onChange={(e) => setForm({ ...form, telegramUser: e.target.value })} placeholder="@telegram" className="rounded-xl border p-2.5 text-sm" dir="ltr" />
+                  <select value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })} className="rounded-xl border p-2.5 text-sm">
+                    {Object.keys(typeMap).map((t) => <option key={t} value={t}>{typeMap[t]}</option>)}
+                  </select>
+                  <select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })} className="rounded-xl border p-2.5 text-sm">
+                    {Object.keys(statusMap).map((s) => <option key={s} value={s}>{statusMap[s][0]}</option>)}
+                  </select>
+                  <input type="number" value={form.budgetUsdt} onChange={(e) => setForm({ ...form, budgetUsdt: e.target.value })} placeholder="بودجه USDT" className="rounded-xl border p-2.5 text-sm" />
+                  <input type="number" value={form.receivedUsdt} onChange={(e) => setForm({ ...form, receivedUsdt: e.target.value })} placeholder="دریافت‌شده USDT" className="rounded-xl border p-2.5 text-sm" />
+                  <input value={form.deadline} onChange={(e) => setForm({ ...form, deadline: e.target.value })} placeholder="ددلاین" className="rounded-xl border p-2.5 text-sm" />
+                  <textarea value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="توضیحات" className="rounded-xl border p-2.5 text-sm md:col-span-2" />
+                  <div className="flex gap-2">
+                    <button className="flex-1 rounded-xl bg-emerald-500 py-2.5 text-sm font-black text-black">ذخیره</button>
+                    <button type="button" onClick={() => setShowForm(false)} className="rounded-xl border px-3 text-sm">لغو</button>
+                  </div>
+                </form>
+              )}
+
+              <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                {filteredProjects.map((p) => (
+                  <div key={p.id} className="rounded-3xl border bg-white p-4">
+                    <div className="flex items-start justify-between gap-2">
+                      <b className="text-sm">{p.title}</b>
+                      <span className={`rounded-full px-2 py-0.5 text-[9px] font-bold ${statusMap[p.status]?.[1] || "bg-slate-100"}`}>
+                        {statusMap[p.status]?.[0] || p.status}
+                      </span>
+                    </div>
+                    <p className="mt-1 text-[11px] text-slate-500">
+                      {p.clientName} {p.telegramUser && <span dir="ltr">{p.telegramUser}</span>}
+                    </p>
+                    <p className="mt-2 line-clamp-2 text-[11px] leading-5 text-slate-600">{p.description}</p>
+                    <div className="mt-2 flex items-center justify-between text-[11px]">
+                      <span className="font-black text-emerald-600">{fa(p.receivedUsdt)} / {fa(p.budgetUsdt)} USDT</span>
+                      <span className="text-slate-400">{p.deadline || "—"}</span>
+                    </div>
+                    <div className="mt-3 flex gap-2 text-[10px]">
+                      <button
+                        onClick={() => {
+                          setEdit(p);
+                          setForm({ ...p, budgetUsdt: String(p.budgetUsdt), receivedUsdt: String(p.receivedUsdt) });
+                          setShowForm(true);
+                          window.scrollTo({ top: 0, behavior: "smooth" });
+                        }}
+                        className="rounded-lg bg-slate-100 px-2.5 py-1 font-bold"
+                      >
+                        ویرایش
+                      </button>
+                      <button onClick={() => delProject(p.id)} className="rounded-lg bg-red-50 px-2.5 py-1 text-red-600">
+                        حذف
+                      </button>
+                    </div>
+                  </div>
+                ))}
+                {filteredProjects.length === 0 && (
+                  <div className="col-span-full rounded-3xl border border-dashed bg-white p-10 text-center text-sm text-slate-500">
+                    پروژه‌ای یافت نشد. با «+ پروژه جدید» اولین پروژه واقعی را ثبت کنید.
+                  </div>
+                )}
+              </div>
+            </section>
+          )}
+
+          {/* ═══════════════ گفتگوها ═══════════════ */}
+          {view === "chats" && (
+            <section className="mt-4 grid gap-3 lg:grid-cols-3">
+              <div className="rounded-3xl border bg-white p-3">
+                <h3 className="px-2 font-black">گفتگوهای تلگرام</h3>
+                {chatList.map((c: any) => (
+                  <button
+                    key={c.clientName}
+                    onClick={() => setChatUser(c.clientName)}
+                    className={`mt-2 w-full rounded-2xl p-2.5 text-right transition ${
+                      activeChat === c.clientName ? "bg-[#0B1220] text-white" : "hover:bg-slate-50"
+                    }`}
+                  >
+                    <b className="text-xs">{c.clientName}</b>
+                    <p className={`truncate text-[10px] ${activeChat === c.clientName ? "text-slate-300" : "text-slate-500"}`}>
+                      {c.text}
+                    </p>
+                  </button>
+                ))}
+                {chatList.length === 0 && (
+                  <p className="mt-4 p-4 text-center text-[11px] text-slate-400">
+                    پیامی نیست. با ثبت وبهوک تلگرام، پیام مشتریان واقعی اینجا ظاهر می‌شود.
+                  </p>
+                )}
+              </div>
+
+              <div className="rounded-3xl border bg-white p-4 lg:col-span-2">
+                <h3 className="font-black">{activeChat || "گفتگو"}</h3>
+                <div className="mt-3 max-h-[420px] space-y-2 overflow-y-auto">
+                  {chatMsgs.map((m: any) => (
+                    <div key={m.id} className={`flex ${m.direction === "out" ? "justify-end" : "justify-start"}`}>
+                      <div
+                        className={`max-w-[80%] rounded-2xl px-3 py-2 text-[11px] leading-5 ${
+                          m.direction === "out" ? "bg-emerald-500 text-white" : "bg-slate-100 text-slate-700"
+                        }`}
+                      >
+                        {m.text}
+                        <div className={`mt-1 text-[8px] ${m.direction === "out" ? "text-emerald-100" : "text-slate-400"}`}>
+                          {dt(m.createdAt)} • {m.source}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <div className="mt-3 flex gap-2">
+                  <input
+                    value={chatText}
+                    onChange={(e) => setChatText(e.target.value)}
+                    placeholder="پاسخ شما (واقعاً از ربات تلگرام ارسال می‌شود)"
+                    className="flex-1 rounded-xl border px-3 py-2 text-sm"
+                  />
+                  <button
+                    onClick={sendChat}
+                    disabled={busy === "chat"}
+                    className="rounded-xl bg-[#229ED9] px-4 py-2 text-sm font-bold text-white disabled:opacity-50"
+                  >
+                    ارسال 📩
+                  </button>
+                </div>
+              </div>
+            </section>
+          )}
+
+          {/* ═══════════════ صف تأیید ═══════════════ */}
+          {view === "approvals" && (
+            <section className="mt-4 space-y-3">
+              <div className="rounded-3xl border bg-white p-5">
+                <h3 className="font-black">🗂 کارهای ایجنت‌ها (Job Queue واقعی)</h3>
+                <p className="mt-1 text-[11px] text-slate-500">
+                  تأیید هر کار، همان لحظه اجرا می‌شود (سفارش صرافی / تأیید واریز). نتیجه در تلگرام هم به‌روزرسانی می‌شود.
+                </p>
+                <ul className="mt-3 space-y-2">
+                  {jobs.slice(0, 30).map((j: any) => (
+                    <li key={j.id} className="rounded-2xl border p-3">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[9px]">#{j.id}</span>
+                          <b className="text-xs">{j.title}</b>
+                          <span className={`rounded-full border px-2 py-0.5 text-[9px] ${tradeStatus[j.status]?.[1] || "border-slate-300 text-slate-500"}`}>
+                            {tradeStatus[j.status]?.[0] || j.status}
+                          </span>
+                        </div>
+                        <span className="text-[9px] text-slate-400">{dt(j.createdAt)}</span>
+                      </div>
+                      <p className="mt-1 text-[10px] text-slate-500">{j.agentName}{j.detail ? ` • ${j.detail}` : ""}</p>
+                      {j.error && <p className="mt-1 rounded bg-red-50 p-2 text-[10px] text-red-600">⛔ {j.error}</p>}
+                      {j.status === "awaiting_approval" && (
+                        <div className="mt-2 flex gap-2">
+                          <button
+                            onClick={() => jobAction(j.id, "approve")}
+                            disabled={busy === `job-${j.id}`}
+                            className="rounded-lg bg-emerald-500 px-3 py-1 text-[11px] font-black text-white disabled:opacity-50"
+                          >
+                            ✅ تأیید و اجرا
+                          </button>
+                          <button onClick={() => jobAction(j.id, "reject")} className="rounded-lg bg-red-50 px-3 py-1 text-[11px] font-bold text-red-600">
+                            ❌ رد
+                          </button>
+                        </div>
+                      )}
+                    </li>
+                  ))}
+                  {jobs.length === 0 && (
+                    <p className="rounded-2xl bg-slate-50 p-6 text-center text-xs text-slate-400">
+                      صف کار خالی است. از دفتر کارمند یک مأموریت بسازید.
+                    </p>
+                  )}
+                </ul>
+              </div>
+
+              <div className="rounded-3xl border bg-white p-5">
+                <h3 className="font-black">✅ تسک‌های منتظر تأیید</h3>
+                <ul className="mt-3 space-y-2">
+                  {pendingTasks.map((t: any) => (
+                    <li key={t.id} className="rounded-2xl border p-3">
+                      <b className="text-xs">{t.title}</b>
+                      <p className="mt-1 text-[10px] text-slate-500">{t.agent} • {t.projectTitle}</p>
+                      <p className="mt-1 text-[10px] text-slate-400">{t.description}</p>
+                      <div className="mt-2 flex gap-2">
+                        <button onClick={() => actTask(t, "approved")} className="rounded-lg bg-emerald-500 px-3 py-1 text-[11px] font-black text-white">تأیید ✅</button>
+                        <button onClick={() => actTask(t, "rejected")} className="rounded-lg bg-red-50 px-3 py-1 text-[11px] font-bold text-red-600">رد ❌</button>
+                      </div>
+                    </li>
+                  ))}
+                  {pendingTasks.length === 0 && <p className="text-xs text-slate-400">تسکی نیست.</p>}
+                </ul>
+              </div>
+            </section>
+          )}
+
+          {/* ═══════════════ کیف پول و درآمد ═══════════════ */}
+          {view === "earnings" && (
+            <section className="mt-4 space-y-4">
+              <div className="grid gap-3 md:grid-cols-4">
+                {[
+                  ["درآمد تأییدشده", fa(stats?.income ?? 0), "text-emerald-600"],
+                  ["در انتظار تأیید", fa(stats?.incomePending ?? 0), "text-amber-600"],
+                  ["برداشت‌ها", fa(walletInfo?.withdrawals ?? 0), "text-slate-700"],
+                  ["خالص", fa(walletInfo?.netBalance ?? 0), "text-[#0B1220]"],
+                ].map(([l, v, c]) => (
+                  <div key={l} className="rounded-3xl border bg-white p-4">
+                    <p className="text-[11px] text-slate-500">{l}</p>
+                    <p className={`mt-1 text-xl font-black ${c}`}>{v} <span className="text-[10px] font-normal">USDT</span></p>
+                  </div>
+                ))}
+              </div>
+
+              <div className="rounded-3xl border bg-white p-5">
+                <h3 className="font-black">📈 درآمد ماهانه (از تراکنش‌های واقعی)</h3>
+                {stats?.chart?.length ? (
+                  <div className="mt-5 flex h-44 items-end gap-3">
+                    {stats.chart.map((c: any) => (
+                      <div key={c.m} className="flex-1 text-center">
+                        <div className="mx-auto w-full max-w-[54px] rounded-t-xl bg-emerald-500" style={{ height: `${(Number(c.v) / maxChart) * 150}px`, minHeight: Number(c.v) > 0 ? 4 : 0 }} />
+                        <p className="mt-1 text-[10px] font-bold">{fa(c.v)}</p>
+                        <p className="text-[9px] text-slate-400">{c.m}</p>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="mt-4 rounded-2xl bg-slate-50 p-6 text-center text-xs text-slate-400">
+                    داده‌ای برای نمودار نیست؛ درآمد فقط با تراکنش واقعی ثبت می‌شود.
+                  </p>
+                )}
+              </div>
+
+              <div className="grid gap-4 lg:grid-cols-2">
+                <form onSubmit={addIncome} className="rounded-3xl border bg-white p-5">
+                  <h3 className="font-black">➕ ثبت درآمد واقعی (با شاهد)</h3>
+                  <p className="mt-1 text-[11px] text-slate-500">هش تراکنش اجباری است؛ ورود مبلغ بدون شاهد رد می‌شود.</p>
+                  <div className="mt-3 grid grid-cols-2 gap-2">
+                    <input required value={txForm.title} onChange={(e) => setTxForm({ ...txForm, title: e.target.value })} placeholder="عنوان درآمد" className="col-span-2 rounded-xl border p-2.5 text-sm" />
+                    <select value={txForm.agentName} onChange={(e) => setTxForm({ ...txForm, agentName: e.target.value })} className="col-span-2 rounded-xl border p-2.5 text-sm">
+                      <option value="">انتخاب کارمند</option>
+                      {agentsList.map((a) => <option key={a.id} value={a.name}>{a.name}</option>)}
+                    </select>
+                    <input type="number" required value={txForm.amountUsdt} onChange={(e) => setTxForm({ ...txForm, amountUsdt: e.target.value })} placeholder="مبلغ USDT" className="rounded-xl border p-2.5 text-sm" />
+                    <select value={txForm.network} onChange={(e) => setTxForm({ ...txForm, network: e.target.value })} className="rounded-xl border p-2.5 text-sm">
+                      {["TRC20", "BEP20", "ERC20", "TON"].map((n) => <option key={n}>{n}</option>)}
+                    </select>
+                    <input required value={txForm.txHash} onChange={(e) => setTxForm({ ...txForm, txHash: e.target.value })} placeholder="هش تراکنش (txHash)" className="col-span-2 rounded-xl border p-2.5 font-mono text-xs" dir="ltr" />
+                  </div>
+                  <button className="mt-3 w-full rounded-xl bg-emerald-500 py-2.5 text-sm font-black text-black">ثبت درآمد ✅</button>
+                </form>
+
+                <div className="overflow-hidden rounded-3xl border bg-white">
+                  <div className="border-b px-4 py-3 text-sm font-black">تراکنش‌های اخیر</div>
+                  <div className="max-h-[360px] overflow-y-auto">
+                    <table className="w-full text-right text-[10px]">
+                      <tbody>
+                        {(txs.length ? txs : walletInfo?.transactions || []).slice(0, 30).map((t: any) => (
+                          <tr key={t.id} className="border-b last:border-0">
+                            <td className="px-3 py-2">
+                              <b>{t.title}</b>
+                              <p className="text-[9px] text-slate-400">{t.agentName} • {dt(t.createdAt)}</p>
+                            </td>
+                            <td className={`px-3 py-2 font-black ${Number(t.amountUsdt) < 0 ? "text-red-500" : "text-emerald-600"}`}>
+                              {fa(t.amountUsdt)}
+                            </td>
+                            <td className="px-3 py-2">
+                              <span className={`rounded-full px-2 py-0.5 text-[8px] ${t.status === "confirmed" ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}>
+                                {t.status === "confirmed" ? "تأییدشده" : "در انتظار"}
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            </section>
+          )}
+
+          {/* ═══════════════ ابزارها ═══════════════ */}
+          {view === "tools" && (
+            <section className="mt-4 space-y-4">
+              <div className="rounded-3xl border bg-white p-5">
+                <h3 className="font-black">⚡ اجرای واقعی ابزارها با ورکر</h3>
+                <p className="mt-1 text-[11px] text-slate-500">
+                  ابزارها بدون سرویس واقعی خروجی نمی‌سازند. AGENT_WORKER_URL را ست کنید تا درخواست‌ها به n8n یا سرویس
+                  خودتان برود.
+                </p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <input
+                    value={toolInput}
+                    onChange={(e) => setToolInput(e.target.value)}
+                    placeholder="ورودی ابزار (مثلاً: لندینگ صرافی ارز دیجیتال)"
+                    className="min-w-[260px] flex-1 rounded-xl border px-3 py-2 text-sm"
+                  />
+                  {["Next.js", "PPTX", "مترجم"].map((t) => (
+                    <button
+                      key={t}
+                      onClick={() => runTool(t)}
+                      disabled={busy === "tool"}
+                      className="rounded-xl bg-[#0B1220] px-4 py-2 text-sm font-bold text-white disabled:opacity-50"
+                    >
+                      اجرای {t}
+                    </button>
+                  ))}
+                </div>
+                {toolOut && (
+                  <pre className="mt-3 whitespace-pre-wrap rounded-2xl bg-slate-50 p-4 text-[11px] leading-6">{toolOut}</pre>
+                )}
+              </div>
+              <div className="rounded-3xl border bg-white p-5">
+                <h3 className="font-black">آخرین اجراها</h3>
+                {tools.length === 0 ? (
+                  <p className="mt-3 text-xs text-slate-400">هنوز اجرایی ثبت نشده است.</p>
+                ) : (
+                  <ul className="mt-3 space-y-2">
+                    {tools.slice(0, 10).map((t: any) => (
+                      <li key={t.id} className="rounded-2xl border p-3 text-[11px]">
+                        <b>{t.tool}</b>
+                        <span className={`float-left rounded-full px-2 py-0.5 text-[9px] ${t.status === "done" ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}>
+                          {t.status}
+                        </span>
+                        <p className="mt-1 text-slate-500">{t.input}</p>
+                        {t.output && <p className="mt-1 whitespace-pre-wrap text-slate-700">{t.output}</p>}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </section>
+          )}
+
+          {/* ═══════════════ تلگرام ═══════════════ */}
+          {view === "telegram" && (
+            <section className="mt-4 space-y-4">
+              <div className="rounded-3xl border bg-white p-5">
+                <h3 className="font-black">📩 مکانیزم تأیید انسانی در تلگرام</h3>
+                <p className="mt-1 text-[11px] leading-6 text-slate-500">
+                  با ست کردن TELEGRAM_BOT_TOKEN و TELEGRAM_ADMIN_CHAT_ID، هر درخواست تأیید با دکمه‌های شیشه‌ای به شما
+                  ارسال می‌شود. کلیک روی «تأیید» همان لحظه Job را در دیتابیس و صرافی اجرا می‌کند.
+                </p>
+                <div className="mt-3 grid gap-2 text-[11px] md:grid-cols-3">
+                  <div className="rounded-xl bg-slate-50 p-3">
+                    <p className="text-slate-500">توکن ربات</p>
+                    <b className={walletInfo?.deployment?.telegramConfigured ? "text-emerald-600" : "text-amber-600"}>
+                      {walletInfo?.deployment?.telegramConfigured ? "ست شده" : "ست نشده"}
+                    </b>
+                  </div>
+                  <div className="rounded-xl bg-slate-50 p-3">
+                    <p className="text-slate-500">سکرت وبهوک</p>
+                    <b className="text-slate-700">در فایل env بررسی شود</b>
+                  </div>
+                  <div className="rounded-xl bg-slate-50 p-3">
+                    <p className="text-slate-500">کرون</p>
+                    <b className={walletInfo?.deployment?.cronConfigured ? "text-emerald-600" : "text-amber-600"}>
+                      {walletInfo?.deployment?.cronConfigured ? "فعال" : "CRON_SECRET ست نشده"}
+                    </b>
+                  </div>
+                </div>
                 <button
                   onClick={async () => {
-                    await fetch("/api/telegram/webhook", {
-                      method: "POST",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({
-                        callback_query: {
-                          data: "approve:1",
-                          from: { username: "admin" },
-                        },
-                      }),
-                    });
-                    notify("Callback تلگرام تست شد ✅");
-                    load();
+                    setBusy("webhook");
+                    try {
+                      const d = await api("/api/telegram/setup", "POST", { action: "set" });
+                      notify(d.ok ? `وبهوک ثبت شد: ${d.url}` : `⚠️ ${d.telegram || "خطا"}`);
+                    } catch (err: any) {
+                      notify(`⚠️ ${err.message}`);
+                    } finally {
+                      setBusy("");
+                    }
                   }}
-                  className="border px-5 py-2 rounded-full font-bold"
+                  disabled={busy === "webhook"}
+                  className="mt-3 rounded-xl bg-[#229ED9] px-4 py-2 text-sm font-bold text-white disabled:opacity-50"
                 >
-                  تست Inline Button
+                  {busy === "webhook" ? "⏳" : "🔗"} ثبت وبهوک روی دامنه فعلی
                 </button>
               </div>
-            </div>
 
-            <div className="bg-white border rounded-3xl p-6">
-              <h3 className="font-black">تنظیمات اتوماسیون</h3>
-              {[
-                ["واریز خودکار سود همه ایجنت‌ها به کیف پول واحد", true],
-                ["نیاز به تأیید انسانی برای ارسال فاکتور", true],
-                ["همگام‌سازی زنده پیام‌های تلگرام با Webhook", true],
-                ["هشدار تراکنش USDT در تلگرام", true],
-              ].map(([l, v]: any) => (
-                <div
-                  key={l}
-                  className="flex justify-between py-3 border-b last:border-0"
-                >
-                  <span className="text-sm font-bold">{l}</span>
-                  <span
-                    className={`px-3 py-1 rounded-full text-xs font-bold ${
-                      v
-                        ? "bg-emerald-100 text-emerald-700"
-                        : "bg-slate-100 text-slate-500"
-                    }`}
-                  >
-                    {v ? "فعال" : "غیرفعال"}
-                  </span>
+              <div className="rounded-3xl border bg-white p-5">
+                <h3 className="font-black">پیام‌های واقعی دریافت‌شده</h3>
+                <ul className="mt-3 space-y-2">
+                  {msgs.slice(0, 12).map((m: any) => (
+                    <li key={m.id} className="rounded-2xl border p-3">
+                      <div className="flex items-center justify-between">
+                        <b className="text-xs">{m.clientName}</b>
+                        <span className="text-[9px] text-slate-400">{dt(m.createdAt)}</span>
+                      </div>
+                      <p className="mt-1 text-[11px] text-slate-600">{m.text}</p>
+                    </li>
+                  ))}
+                  {msgs.length === 0 && <p className="text-xs text-slate-400">پیامی ثبت نشده است.</p>}
+                </ul>
+              </div>
+            </section>
+          )}
+
+          {/* ═══════════════ گزارش کارمندان ═══════════════ */}
+          {view === "logs" && (
+            <section className="mt-4 space-y-4">
+              <div className="rounded-3xl border bg-white p-5">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <h3 className="font-black">🧾 دفتر رویدادهای واقعی (agent_activity_logs)</h3>
+                  <Link href="/control/system" className="text-[11px] font-bold text-slate-500 underline">
+                    خطاهای سیستم ←
+                  </Link>
                 </div>
-              ))}
-            </div>
-          </section>
-        )}
-
-        {/* ==================== ۹. آمادگی استقرار GitHub + Supabase + Vercel ==================== */}
-        {view === "deploy" && (
-          <section className="mt-4 space-y-4">
-            <div className="bg-white border rounded-3xl p-6">
-              <h3 className="font-black text-xl">
-                ☁️ وضعیت اتصال دیتابیس و آمادگی استقرار ابری
-              </h3>
-              <div className="grid md:grid-cols-4 gap-3 mt-4">
-                {[
-                  [
-                    "دیتابیس PostgreSQL / Supabase",
-                    walletInfo?.deployment?.databaseConnected
-                      ? "✅ متصل و فعال"
-                      : "⏳ در حال بررسی",
-                  ],
-                  [
-                    "محیط اجرا (Vercel / Local)",
-                    walletInfo?.deployment?.isVercel
-                      ? "🚀 Vercel Production"
-                      : "💻 Local Ready",
-                  ],
-                  [
-                    "نوع دیتابیس",
-                    walletInfo?.deployment?.isSupabaseUrl
-                      ? "⚡ Supabase Cloud"
-                      : "🐘 PostgreSQL (سازگار با Supabase)",
-                  ],
-                  [
-                    "ربات تلگرام واقعی",
-                    walletInfo?.deployment?.telegramConfigured
-                      ? "✅ توکن متصل است"
-                      : "🧪 حالت شبیه‌ساز + آماده توکن",
-                  ],
-                ].map(([k, v]) => (
-                  <div key={k} className="bg-slate-50 border rounded-2xl p-4">
-                    <p className="text-xs text-slate-500">{k}</p>
-                    <p className="font-black text-sm mt-1">{v}</p>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div className="grid lg:grid-cols-3 gap-4">
-              <div className="bg-white border rounded-3xl p-5">
-                <h4 className="font-black">۱️⃣ آپلود در GitHub</h4>
-                <p className="text-xs text-slate-500 mt-1">
-                  فایل .gitignore تنظیم شده تا .env و node_modules آپلود نشوند:
-                </p>
-                <pre
-                  className="bg-slate-900 text-emerald-300 rounded-2xl p-3 text-xs mt-3 overflow-x-auto"
-                  dir="ltr"
-                >{`git init
-git add .
-git commit -m "Freelance & Crypto Agent OS"
-git branch -M main
-git remote add origin https://github.com/USER/REPO.git
-git push -u origin main`}</pre>
+                <ul className="mt-3 space-y-2">
+                  {activity.slice(0, 60).map((a: any) => (
+                    <li key={a.id} className="rounded-2xl border p-3">
+                      <div className="flex flex-wrap items-center justify-between gap-1">
+                        <div className="flex items-center gap-2">
+                          <span className={`h-1.5 w-1.5 rounded-full ${a.status === "failed" ? "bg-red-500" : a.status === "pending" ? "bg-amber-500" : "bg-emerald-500"}`} />
+                          <b className="text-xs">{a.action}</b>
+                          {Number(a.rewardUsdt) > 0 && (
+                            <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-[9px] font-black text-emerald-700">
+                              +{fa(a.rewardUsdt)} USDT
+                            </span>
+                          )}
+                        </div>
+                        <span className="text-[9px] text-slate-400">{a.agentName} • {dt(a.createdAt)} • {a.source}</span>
+                      </div>
+                      {a.detail && <p className="mt-1 text-[10px] leading-5 text-slate-500">{a.detail}</p>}
+                      {a.txHash && (
+                        <p className="mt-1 truncate font-mono text-[9px] text-slate-400" dir="ltr">{a.txHash}</p>
+                      )}
+                    </li>
+                  ))}
+                  {activity.length === 0 && (
+                    <p className="rounded-2xl bg-slate-50 p-6 text-center text-xs text-slate-400">
+                      هنوز رویدادی ثبت نشده است.
+                    </p>
+                  )}
+                </ul>
               </div>
 
-              <div className="bg-white border rounded-3xl p-5">
-                <h4 className="font-black">۲️⃣ اتصال به Supabase</h4>
-                <p className="text-xs text-slate-500 mt-1">
-                  فایل آماده <code>supabase/schema.sql</code> را در SQL Editor
-                  سوپابیس اجرا کنید یا با Drizzle پوش کنید:
-                </p>
-                <pre
-                  className="bg-slate-900 text-emerald-300 rounded-2xl p-3 text-xs mt-3 overflow-x-auto"
-                  dir="ltr"
-                >{`# در .env یا Vercel:
-DATABASE_URL="postgresql://postgres.[REF]:[PASS]@aws-0-[REG].pooler.supabase.com:6543/postgres?pgbouncer=true"
-DIRECT_URL="postgresql://postgres.[REF]:[PASS]@aws-0-[REG].pooler.supabase.com:5432/postgres"
-
-npx drizzle-kit push`}</pre>
+              <div className="rounded-3xl border bg-white p-5">
+                <h3 className="font-black">🧠 لاگ فنی ایجنت‌ها (legacy)</h3>
+                <ul className="mt-3 space-y-1.5 text-[11px]">
+                  {logs.slice(0, 20).map((l: any) => (
+                    <li key={l.id} className="flex items-center justify-between rounded-xl bg-slate-50 px-3 py-2">
+                      <span>
+                        <b>{l.agent}</b> — {l.action}
+                      </span>
+                      <span className="text-[9px] text-slate-400">{dt(l.createdAt)}</span>
+                    </li>
+                  ))}
+                  {logs.length === 0 && <p className="text-xs text-slate-400">خالی است.</p>}
+                </ul>
               </div>
-
-              <div className="bg-white border rounded-3xl p-5">
-                <h4 className="font-black">۳️⃣ دیپلوی در Vercel</h4>
-                <p className="text-xs text-slate-500 mt-1">
-                  متغیرهای محیطی زیر را مطابق <code>.env.example</code> در
-                  تنظیمات پروژه Vercel وارد کنید:
-                </p>
-                <pre
-                  className="bg-slate-900 text-emerald-300 rounded-2xl p-3 text-xs mt-3 overflow-x-auto"
-                  dir="ltr"
-                >{`DATABASE_URL=...
-DIRECT_URL=...
-ADMIN_EMAIL=admin@freelance.ir
-ADMIN_PASSWORD=your-strong-password
-AUTH_SECRET=random-32-char-secret
-MASTER_WALLET_ADDRESS=${walletForm.address}
-TELEGRAM_BOT_TOKEN=optional`}</pre>
-              </div>
-            </div>
-          </section>
-        )}
-
-        {/* ==================== ۱۰. لاگ ایجنت‌ها ==================== */}
-        {view === "logs" && (
-          <section className="mt-4 space-y-2">
-            {logs.map((l) => (
-              <div
-                key={l.id}
-                className="bg-white border rounded-2xl p-4 flex justify-between gap-3"
-              >
-                <div>
-                  <b>{l.agent}</b> — {l.action}
-                  <p className="text-sm text-slate-500">{l.detail}</p>
-                </div>
-                <span className="text-xs bg-emerald-100 text-emerald-700 px-2 py-1 rounded-full h-fit">
-                  {l.status} • {fa(l.durationMs)}ms
-                </span>
-              </div>
-            ))}
-            {logs.length === 0 && (
-              <p className="bg-white border rounded-3xl p-10 text-center text-slate-400">
-                لاگی نیست
-              </p>
-            )}
-          </section>
-        )}
-      </main>
-
-      {/* مودال ساخت/ویرایش پروژه */}
-      {showForm && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-end md:items-center justify-center p-3">
-          <form
-            onSubmit={saveProject}
-            className="bg-white w-full max-w-2xl rounded-3xl p-6 max-h-[92vh] overflow-y-auto"
-          >
-            <h3 className="font-black text-xl">
-              {edit ? "ویرایش پروژه" : "پروژه کریپتویی جدید"}
-            </h3>
-            <div className="grid md:grid-cols-2 gap-3 mt-4">
-              <input
-                required
-                value={form.title}
-                onChange={(e) => setForm({ ...form, title: e.target.value })}
-                placeholder="عنوان پروژه *"
-                className="border rounded-xl p-3 md:col-span-2"
-              />
-              <input
-                required
-                value={form.clientName}
-                onChange={(e) =>
-                  setForm({ ...form, clientName: e.target.value })
-                }
-                placeholder="نام مشتری *"
-                className="border rounded-xl p-3"
-              />
-              <input
-                value={form.telegramUser}
-                onChange={(e) =>
-                  setForm({ ...form, telegramUser: e.target.value })
-                }
-                placeholder="@telegram"
-                className="border rounded-xl p-3"
-                dir="ltr"
-              />
-              <select
-                value={form.type}
-                onChange={(e) => setForm({ ...form, type: e.target.value })}
-                className="border rounded-xl p-3"
-              >
-                {Object.entries(typeMap).map(([k, v]) => (
-                  <option key={k} value={k}>
-                    {v}
-                  </option>
-                ))}
-              </select>
-              <select
-                value={form.status}
-                onChange={(e) => setForm({ ...form, status: e.target.value })}
-                className="border rounded-xl p-3"
-              >
-                {Object.entries(statusMap).map(([k, v]) => (
-                  <option key={k} value={k}>
-                    {v[0]}
-                  </option>
-                ))}
-              </select>
-              <input
-                type="number"
-                value={form.budgetUsdt}
-                onChange={(e) =>
-                  setForm({ ...form, budgetUsdt: e.target.value })
-                }
-                placeholder="بودجه USDT"
-                className="border rounded-xl p-3"
-              />
-              <input
-                type="number"
-                value={form.receivedUsdt}
-                onChange={(e) =>
-                  setForm({ ...form, receivedUsdt: e.target.value })
-                }
-                placeholder="دریافتی USDT"
-                className="border rounded-xl p-3"
-              />
-              <input
-                value={form.deadline}
-                onChange={(e) => setForm({ ...form, deadline: e.target.value })}
-                placeholder="ددلاین (۱۴۰۵/۰۵/۲۰)"
-                className="border rounded-xl p-3"
-              />
-              <select
-                value={form.priority}
-                onChange={(e) => setForm({ ...form, priority: e.target.value })}
-                className="border rounded-xl p-3"
-              >
-                <option value="high">🔴 اولویت بالا</option>
-                <option value="medium">🟡 متوسط</option>
-                <option value="low">🟢 کم</option>
-              </select>
-              <textarea
-                value={form.description}
-                onChange={(e) =>
-                  setForm({ ...form, description: e.target.value })
-                }
-                placeholder="توضیحات پروژه..."
-                className="border rounded-xl p-3 md:col-span-2"
-                rows={3}
-              />
-            </div>
-            <div className="flex gap-2 mt-5">
-              <button className="flex-1 bg-emerald-500 text-white py-3 rounded-xl font-bold">
-                {edit ? "ذخیره تغییرات" : "ساخت پروژه"}
-              </button>
-              <button
-                type="button"
-                onClick={() => setShowForm(false)}
-                className="px-6 border rounded-xl font-bold"
-              >
-                انصراف
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
+            </section>
+          )}
+        </main>
+      </div>
 
       {toast && (
-        <div className="fixed bottom-5 left-1/2 -translate-x-1/2 bg-slate-900 text-white px-5 py-3 rounded-full shadow-2xl z-[60] font-bold text-sm">
+        <div className="fixed bottom-5 left-1/2 z-50 w-[92%] max-w-lg -translate-x-1/2 rounded-2xl bg-[#0B1220] px-5 py-3 text-center text-xs font-bold text-emerald-200 shadow-2xl">
           {toast}
         </div>
       )}

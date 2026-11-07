@@ -1,83 +1,234 @@
-# 🤖 مرکز کنترل ناوگان ایجنت‌ها و فریلنسری خودکار (Freelance & Crypto Agent OS)
+# 🏢 Agent Company OS — ساختمان اداری ایجنت‌های درآمدزا
 
-پلتفرم جامع مدیریت **مجموعه‌ای از ایجنت‌های درآمدزا** (از جمله **کارمند تخصصی رمزارز**، ایجنت شکار پروژه Next.js، ایجنت فروش تلگرام، ایجنت ساخت PPTX، ایجنت مترجم Web3 و ایجنت‌های وب‌هوک خارجی) که همگی درآمد USDT خود را به **یک کیف پول واحد مرکزی (Unified Master Wallet)** واریز می‌کنند.
+پلتفرم مدیریت مجموعه‌ای از **کارمندان دیجیتال** (تریدر رمزارز، توسعه‌دهنده، فروشنده تلگرام، تولید محتوا و ایجنت‌های وب‌هوک خارجی) که:
 
----
-
-## ✨ قابلیت‌های کلیدی
-- **🪙 کارمند تخصصی رمزارز (Crypto Employee Agent):** رصد آربیتراژ DEX/CEX، تحلیل جریان نهنگ‌ها، شکار ایردراپ و کپی‌ترید با گزارش کامل و واریز سود به کیف پول واحد.
-- **🤖 ناوگان ایجنت‌ها + ایجنت‌ساز و API اختصاصی:** ساخت ایجنت/کارمند دیجیتال جدید با کلید API اختصاصی (`x-agent-key`) و اندپوینت استاندارد `POST /api/agents/ingest` برای اتصال ربات‌های پایتون، TradingView، n8n یا هر سرویس خارجی دیگر.
-- **💳 کیف پول واحد مرکزی (Unified Master Vault):** تنظیم آدرس کیف پول واحد (TRC20 / TON / BEP20 / ERC20) و تجمیع خودکار درآمد تمام ایجنت‌ها و پروژه‌ها در یک مقصد واحد.
-- **📩 ربات تلگرام و تأیید انسانی (HITL):** همگام‌سازی Webhook تلگرام با دکمه‌های شیشه‌ای (`Inline Keyboard`) برای تأیید یا رد تسک‌ها.
-- **💼 مدیریت کامل پروژه‌های کریپتویی (CRUD):** جستجو، فیلتر وضعیت، پیگیری پرداخت USDT و چت تعاملی با مشتریان.
+- هر کارمند **دفتر مستقل، هدف مشخص و گزارش واقعی** دارد؛
+- همه‌ی درآمدها به **کیف پول واحد USDT** نسبت داده می‌شوند؛
+- **هیچ داده‌ی ساختگی (Mock/Random) در کد نیست** — درآمد فقط با شاهد تراکنش، سفارش واقعی صرافی یا تأیید مدیرعامل ثبت می‌شود؛
+- دستورهای حساس با **دکمه‌های شیشه‌ای تلگرام (Human-in-the-Loop)** تأیید و همان لحظه در دیتابیس و صرافی اجرا می‌شوند.
 
 ---
 
-## 🚀 راهنمای گام‌به‌گام استقرار (GitHub + Supabase + Vercel)
+## ۱) چه چیزی «واقعی» شد؟ (حذف کامل Mock)
 
-### گام ۱: آپلود در GitHub
-فایل `.gitignore` طوری تنظیم شده که فایل‌های حساس مثل `.env` و `node_modules` هرگز به گیت‌هاب ارسال نشوند.
-```bash
-git init
-git add .
-git commit -m "Initial commit: Freelance & Crypto Agent Control Center"
-git branch -M main
-git remote add origin https://github.com/YOUR_USERNAME/YOUR_REPO.git
-git push -u origin main
+| قبل (نمایشی) | حالا (عملیاتی) |
+| --- | --- |
+| `Math.random()` برای مبلغ پاداش و مدت اجرا | مبلغ فقط از ورودی واقعی؛ مدت اجرا با اندازه‌گیری واقعی (`Date.now`) |
+| هش تراکنش تصادفی `ab12...cd34` | هش واقعی اجباری + تأیید زنجیره‌ای (TronGrid / Etherscan) |
+| «اجرای فوری کارمند رمزارز» که پول می‌ساخت | `market_scan` واقعی + سفارش واقعی صرافی فقط پس از تأیید |
+| قیمت BTC/ETH با `Math.random()` | قیمت واقعی Binance با فالبک OKX و ذخیره در `market_snapshots` |
+| نمودار درآمد با اعداد ثابت | `GROUP BY month` روی تراکنش‌های تأییدشده |
+| ابزارها خروجی جعلی می‌ساختند | اجرای واقعی توسط ورکر (`AGENT_WORKER_URL`)؛ بدون ورکر → خطای صریح |
+| سید با ۵ تراکنش و ۶ پروژه‌ی ساختگی | سید فقط «چارت سازمانی» با درآمد صفر |
+| وبهوک تلگرام فقط لاگ می‌نوشت | وبهوک واقعی: `answerCallbackQuery` + اجرای Job + ویرایش پیام |
+| تأیید از پنل، پیام جعلی به خود webhook می‌فرستاد | تأیید مستقیم از API واقعی `/api/jobs` |
+
+نکته‌ی مهم: سیستم **هیچ‌وقت** عددی از خودش نمی‌سازد. اگر صرافی/تلگرام در دسترس یا پیکربندی نشده باشد، پاسخ صریح `503 / not_configured` با دلیل فارسی برمی‌گردد و در `system_events` ثبت می‌شود.
+
+---
+
+## ۲) نقشه‌ی معماری
+
+```
+Vercel Cron ──► /api/cron/tick ──► market_snapshots / agent_jobs / گزارش تلگرام
+                                        │
+Telegram (دکمه تأیید) ──► /api/telegram/webhook ──► approveJob()
+                                        │
+                                   اجرای واقعی
+                        ┌───────────────┼────────────────┐
+                        ▼               ▼                ▼
+                 Binance Order   تأیید واریز زنجیره‌ای   گزارش/Gemini
+                        │               │
+                        └────► transactions + agent_activity_logs
+                                        │
+                          agentos.record_agent_revenue()  (اتمیک)
+                                        │
+                            agents.earned_usdt + هدف کارمند
 ```
 
-### گام ۲: ساخت دیتابیس در Supabase
-1. وارد [Supabase](https://supabase.com) شوید و یک پروژه جدید بسازید.
-2. از مسیر **Project Settings → Database → Connection string** دو آدرس زیر را کپی کنید:
-   - **Transaction Pooler (Port 6543):** برای متغیر `DATABASE_URL` در Vercel
-   - **Session Pooler / Direct (Port 5432):** برای متغیر `DIRECT_URL`
-3. برای ساخت جدول‌ها یکی از دو روش زیر را انجام دهید:
-   - **روش الف (سریع‌ترین روش):** محتوای فایل `supabase/schema.sql` را در **SQL Editor** سوپابیس کپی و **Run** کنید.
-   - **روش ب (از ترمینال):** مقدار `DIRECT_URL` را در `.env` بگذارید و اجرا کنید:
-     ```bash
-     npx drizzle-kit push
-     ```
+### جدول‌های جدید (اسکیمای `agentos`)
+| جدول | کارکرد |
+| --- | --- |
+| `agent_activity_logs` | دفتر رویدادهای واقعی هر کارمند (پاداش، خطا، منبع، هش) |
+| `agent_jobs` | صف کار + گردش تأیید (`awaiting_approval → approved → running → succeeded/failed`) |
+| `exchange_orders` | تمام سفارش‌های ارسال‌شده به صرافی با پاسخ خام |
+| `market_snapshots` | تاریخچه‌ی قیمت واقعی |
+| `telegram_updates` | ضدتکرار آپدیت‌های تلگرام (`update_id` یکتا) |
+| `cron_runs` | نتیجه و مدت هر اجرای کرون |
+| `system_events` | خطاها و هشدارهای واقعی برای دیباگ |
 
-### گام ۳: دیپلوی در Vercel
-1. وارد [Vercel](https://vercel.com) شوید، **Add New Project** را بزنید و ریپازیتوری GitHub خود را انتخاب کنید.
-2. در بخش **Environment Variables** متغیرهای زیر را وارد کنید (مطابق فایل `.env.example`):
-   - `DATABASE_URL` ← رشته اتصال Pooler سوپابیس (پورت 6543)
-   - `DIRECT_URL` ← رشته اتصال Direct سوپابیس (پورت 5432)
-   - `ADMIN_EMAIL` ← ایمیل ورود مدیر (پیش‌فرض: `admin@freelance.ir`)
-   - `ADMIN_PASSWORD` ← رمز عبور مدیر (پیش‌فرض: `admin123`)
-   - `AUTH_SECRET` ← یک رشته تصادفی امن
-   - `MASTER_WALLET_ADDRESS` ← آدرس کیف پول واحد USDT شما
-   - `MASTER_WALLET_NETWORK` ← مثلاً `USDT-TRC20`
-   - `TELEGRAM_BOT_TOKEN` ← (اختیاری) توکن ربات از BotFather
-3. دکمه **Deploy** را بزنید! در اولین ورود به `/control` تمام داده‌های پایه به صورت خودکار ساخته می‌شوند.
+توابع دیتابیس: `agentos.record_agent_revenue(...)`، `agentos.increment_agent_success(...)`، `agentos.increment_agent_error(...)`.
 
 ---
 
-## 🔌 نحوه اتصال ایجنت خارجی یا کارمند رمزارز به API کیف پول واحد
+## ۳) استقرار (Vercel + Supabase)
 
-هر زمان که ربات ترید، اسکریپت پایتون یا ایجنت خارجی شما سودی کسب کرد، کافیست یک درخواست `POST` به آدرس زیر ارسال کند تا سود مستقیم به **کیف پول واحد** واریز و در داشبورد ثبت شود:
+### گام ۱ — ساختار دیتابیس
+در **Supabase → SQL Editor** کل `supabase/schema.sql` را اجرا کنید (idempotent است).
+اگر از نسخه‌ی نمایشی قبلی داده دارید، یک‌بار `supabase/purge_demo_data.sql` را هم اجرا کنید تا داده‌های ساختگی حذف و درآمدها بازمحاسبه شوند.
+
+### گام ۲ — متغیرهای محیطی (Vercel → Settings → Environment Variables)
+حداقل‌های الزامی:
+
+| کلید | توضیح |
+| --- | --- |
+| `DATABASE_URL` | رشته‌ی Pooler سوپابیس (پورت 6543) |
+| `ADMIN_EMAIL` / `ADMIN_PASSWORD` | ورود مدیرعامل (رمز پیش‌فرض را عوض کنید) |
+| `AUTH_SECRET` | رشته‌ی تصادفی ۶۴ کاراکتری برای امضای نشست |
+| `TELEGRAM_BOT_TOKEN` / `TELEGRAM_ADMIN_CHAT_ID` | ربات و چت‌آیدی شما |
+| `CRON_SECRET` | کلید اجرای کرون |
+
+توصیه‌شده: `MASTER_WALLET_ADDRESS`, `MASTER_WALLET_NETWORK`, `TELEGRAM_WEBHOOK_SECRET`, `NEXT_PUBLIC_APP_URL`, `EXCHANGE_API_KEY`, `EXCHANGE_SECRET_KEY` (نام قدیمی `EXCHANGE_API_SECRET` هم پذیرفته می‌شود), `EXCHANGE_TESTNET`, `AGENT_TRADING_ENABLED`, `TRONGRID_API_KEY`/`ETHERSCAN_API_KEY`, `GEMINI_API_KEY`, `AGENT_WORKER_URL`.
+
+فایل کامل با توضیح هر کلید: [`.env.example`](./.env.example).
+> `NEXT_PUBLIC_SUPABASE_URL` و `SUPABASE_SERVICE_ROLE_KEY` اختیاری‌اند؛ این پروژه مستقیم با Postgres کار می‌کند و برای امنیت، تنها یک مسیر دسترسی (Pooler + رول محدود) دارد.
+
+### گام ۳ — Cron
+`vercel.json` دو کرون دارد (سازگار با پلن Hobby = یک‌بار در روز):
+
+```json
+{ "path": "/api/cron/tick?job=full",    "schedule": "0 6 * * *" },
+{ "path": "/api/cron/tick?job=reports", "schedule": "30 6 * * *" }
+```
+
+اگر پلن Pro دارید و اسکن هر ۱۰ دقیقه می‌خواهید، `schedule` را به `*/10 * * * *` تغییر دهید. جایگزین روی Hobby: یک سرویس Ping (مثل cron-job.org) با آدرس
+`/api/cron/tick?job=full&secret=CRON_SECRET` و متد GET.
+
+### گام ۴ — اتصال تلگرام
+1. توکن ربات را از @BotFather بگیرید و `TELEGRAM_BOT_TOKEN` را ست کنید.
+2. چت‌آیدی خود را با `/id` در ربات بگیرید و در `TELEGRAM_ADMIN_CHAT_ID` بگذارید.
+3. در داشبورد → **🩺 دیباگ و لاگ سیستم** → دکمه‌ی **🔗 ثبت وبهوک تلگرام** را بزنید (یا در ترمینال):
 
 ```bash
-curl -X POST https://YOUR-DOMAIN.vercel.app/api/agents/ingest \
+curl -X POST "https://YOUR-APP.vercel.app/api/telegram/setup" \
+  -H "Cookie: session=..." -H "Content-Type: application/json" \
+  -d '{"action":"set"}'
+```
+4. تست: `/start` و `/status` در ربات.
+
+**کجا نگهداری می‌شود (تا دیگر لازم نباشد توکن را دوباره پیدا/پیست کنید):**
+
+| محل | چه چیزی | قابل commit است؟ |
+| --- | --- | --- |
+| Vercel → Settings → Environment Variables | `TELEGRAM_BOT_TOKEN` (نوع Sensitive)، `TELEGRAM_ADMIN_CHAT_ID`, `TELEGRAM_BOT_USERNAME`, `TELEGRAM_WEBHOOK_SECRET` | نه؛ فقط در پنل Vercel |
+| فایل `.env.local` در ریشه پروژه | همان کلیدها برای اجرای محلی | نه؛ در `.gitignore` |
+| GitHub Actions Secrets (اختیاری) | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET` برای ثبت وبهوک از CI | نه؛ رمزنگاری‌شده |
+
+- توکن هرگز داخل کد یا فایل ترک‌شده قرار نمی‌گیرد (ریپو عمومی است). کد فقط `process.env.TELEGRAM_BOT_TOKEN` را می‌خواند.
+- **تعویض توکن** (Rotate): توکن جدید را از @BotFather بگیرید → در Vercel (هر سه محیط) و در `.env.local` به‌روزرسانی کنید → Redeploy → دوباره دکمه‌ی **🔗 ثبت وبهوک تلگرام** را بزنید (چون توکن عوض شده، وبهوک قبلی باطل است).
+- اگر محیطی (مثل sandbox توسعه) به `api.telegram.org` دسترسی ندارد، ثبت وبهوک را از داشبورد همان دیپلوی یا مستقیماً با این آدرس در مرورگر انجام دهید:
+  `https://api.telegram.org/bot<TOKEN>/setWebhook?url=https://YOUR-APP.vercel.app/api/telegram/webhook&secret_token=<TELEGRAM_WEBHOOK_SECRET>`
+  پاسخ `{"ok":true,...}` یعنی توکن معتبر است و وبهوک ثبت شد؛ برای بررسی: `.../getWebhookInfo`.
+
+### گام ۵ — اتصال صرافی (آریا)
+1. ابتدا کلیدهای **Testnet** بایننس (`https://testnet.binance.vision`) را بسازید.
+2. `EXCHANGE_TESTNET=true`, `AGENT_TRADING_ENABLED=false` → برای تست، `true` کنید.
+3. در دفتر آریا → «📡 اسکن واقعی بازار» و «🪙 درخواست معامله» → تأیید در تلگرام/پنل.
+4. بعد از موفقیت در Testnet، کلیدهای Mainnet را جایگزین کنید.
+
+قفل ایمنی: بدون `AGENT_TRADING_ENABLED=true` هیچ سفارشی ارسال نمی‌شود (خطای `exchange_trading_disabled`).
+
+---
+
+## ۴) APIهای عملیاتی
+
+| مسیر | متد | کارکرد |
+| --- | --- | --- |
+| `/api/agents` | GET/POST/PUT/DELETE | چارت سازمانی و استخدام کارمند (کلید API واقعی) |
+| `/api/agents/ingest` | POST | دریافت درآمد خارجی با **الزام** `x-agent-key` + `amountUsdt` + `txHash` |
+| `/api/agents/{id}/office` | GET | تمام داده‌ی دفتر: هدف، فعالیت، صف کار، درآمد، زیرساخت |
+| `/api/agents/{id}/report` | POST | گزارش وضعیت از داده‌ی واقعی (+ ارسال تلگرام + Gemini اختیاری) |
+| `/api/agents/{id}/command` | POST | `market_scan` / `request_trade` / `tool_run` / `toggle` / `set_focus` |
+| `/api/jobs` | GET/POST/PATCH | صف کار و تأیید/رد/تلاش دوباره |
+| `/api/jobs` PATCH `{action:"approve"}` | | اجرای واقعی (سفارش صرافی یا تأیید واریز) |
+| `/api/telegram/webhook` | POST | وبهوک واقعی (ضدتکرار + سکرت) |
+| `/api/telegram/setup` | GET/POST | وضعیت و ثبت/حذف وبهوک |
+| `/api/telegram/send` | POST | پیام واقعی / گزارش روزانه همه کارمندان |
+| `/api/cron/tick` | GET/POST | کرون واقعی (`market`,`queue`,`approvals`,`expire`,`reports`,`cleanup`) |
+| `/api/market` | GET/POST | قیمت واقعی و ذخیره اسنپ‌شات |
+| `/api/system/status` | GET | چک‌لیست env، دیتابیس، صرافی، تلگرام، کرون، خطاها |
+| `/api/health` | GET | سلامت دیتابیس + وجود جدول‌ها |
+
+### نمونه‌ی اتصال ربات بیرونی
+
+```bash
+curl -X POST https://YOUR-APP.vercel.app/api/agents/ingest \
   -H "Content-Type: application/json" \
-  -H "x-agent-key: ag_live_crypto_arya_9821" \
+  -H "x-agent-key: ag_live_xxxxxxxx" \
   -d '{
-    "amountUsdt": 65,
-    "title": "سود آربیتراژ جفت ارز TON/USDT",
-    "strategy": "arbitrage"
+    "amountUsdt": 55.25,
+    "txHash": "0x9f41c0d2b7a8e6f5d4c3b2a1908f7e6d5c4b3a2910f8e7d6c5b4a39281706f5e",
+    "network": "BEP20",
+    "title": "سود واقعی آربیتراژ"
   }'
 ```
 
-## Deployment (Supabase + Vercel)
+پاسخ‌ها:
+- `confirmed` → واریز روی زنجیره تأیید شد و درآمد ثبت شد؛
+- `pending_verification` → درآمد ثبت نشد، Job تأیید ساخته و به تلگرام ارسال شد؛
+- `duplicate: true` → همین هش قبلاً ثبت شده (ضد درآمد تکراری).
+- `422` → بدون `txHash` هیچ درآمدی پذیرفته نمی‌شود.
 
-- Database: existing Supabase project `auralis` — tables live in the isolated
-  `agentos` schema (the shared `public` schema belongs to another app).
-  Apply `supabase/schema.sql` once in the SQL Editor (idempotent).
-- Connect via the pooler as the limited role (transaction mode, port 6543):
-  `postgres://agentos.<project-ref>:<password>@aws-1-eu-central-1.pooler.supabase.com:6543/postgres`
-  (Note: this project's tenant is served by the `aws-1` pooler host, and the
-  connection string must NOT contain `sslmode=` — the app manages TLS itself.)
-- Vercel project `freelance-agent-os` env vars: `DATABASE_URL`, `DIRECT_URL`,
-  `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `AUTH_SECRET`, `MASTER_WALLET_NETWORK`,
-  `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `TELEGRAM_ADMIN_CHAT_ID`.
-- Health check: `GET /api/health` → `{ "ok": true }`.
+---
+
+## ۵) چک‌لیست دیباگ (صفحه‌ی 🩺 در داشبورد)
+1. **دیتابیس**: `GET /api/health` → `{ok:true}` و `missingTables: []`.
+2. **Environment Variables**: صفحه‌ی دیباگ حضور همه‌ی کلیدها را نشان می‌دهد (فقط présence، هرگز مقدار).
+3. **Runtime Logs**: در Vercel → Deployments → Logs؛ همچنین `system_events` در صفحه‌ی دیباگ.
+4. **وبهوک تلگرام**: دکمه‌ی ثبت وبهوک + `/webhook` در ربات.
+5. **صرافی**: دکمه‌ی «تست اتصال صرافی» (قیمت + موجودی واقعی).
+6. **کرون**: دکمه‌ی «اجرای دستی کرون» و جدول `cron_runs`.
+
+خطاهای رایج:
+
+| نشانه | علت | راه‌حل |
+| --- | --- | --- |
+| `relation "agentos.agent_jobs" does not exist` | schema.sql اجرا نشده | SQL Editor → اجرای کامل `supabase/schema.sql` |
+| `SELF_SIGNED_CERT_IN_CHAIN` | `sslmode` در DATABASE_URL | آن را حذف کنید (اپ TLS را خودش مدیریت می‌کند) |
+| `message text is empty` تلگرام | پیام خالی/HTML نامعتبر | متن غیرخالی بفرستید؛ escape خودکار است |
+| `exchange_trading_disabled` | قفل ایمنی | `AGENT_TRADING_ENABLED=true` + کلیدها |
+| `worker_not_configured` | ورکر ابزار ست نشده | `AGENT_WORKER_URL` را ست کنید |
+| واریز «در انتظار تأیید» ماند | تأیید زنجیره‌ای ندارید | کلید TronGrid/Etherscan یا تأیید دستی از صف تأیید |
+| قیمت بازار خالی است | دسترسی به Binance/OKX ندارید | قیمت قبلی با برچسب «قدیمی» نمایش داده می‌شود؛ فالبک OKX فعال است |
+
+---
+
+## ۶) داشبورد «محیط شرکت»
+
+- **🏢 ساختمان مرکزی**: هر کارمند یک کارت-دفتر با پنجره، میز، صندلی، درِ اتاق، چراغ وضعیت و **هدف ماه**؛ کلیک → ورود به دفتر.
+- **دفتر هر کارمند** (`/control/office/{id}`): صحنه‌ی سه‌بعدی‌نمای اتاق (دیوار، منظره شهر، مانیتور با لاگ زنده، تابلوی هدف، درِ دفتر)، شش KPI، صف کار و تأییدها، تراکنش‌های واقعی، گزارش وضعیت، خطاها و وضعیت زیرساخت.
+- **🩺 دیباگ**: چک‌لیست env، جدول‌های دیتابیس، تست صرافی/وبهوک، اجرای دستی کرون و خطاهای ۲۴ ساعت.
+
+---
+
+## ۷) اجرای محلی
+
+```bash
+cp .env.example .env.local     # مقادیر را پر کنید
+npm install
+npm run dev                    # http://localhost:3000
+```
+
+- `DATABASE_URL` لوکال: `postgres://user:pass@127.0.0.1:5432/postgres`
+- ساخت جدول‌ها: `psql "$DATABASE_URL" -f supabase/schema.sql`
+- ورود: `ADMIN_EMAIL` / `ADMIN_PASSWORD`
+
+---
+
+## ساختار کد
+
+```
+src/lib/
+  env.ts             چک‌لیست متغیرها + ConfigError
+  auth.ts            نشست HttpOnly + محافظت از عملیات حساس
+  telegram.ts        کلاینت واقعی Bot API (کیبورد شیشه‌ای، ویرایش، وبهوک)
+  exchange.ts        Binance Spot/Testnet (امضا HMAC، سفارش، موجودی، قیمت)
+  market.ts          قیمت واقعی + اسنپ‌شات در دیتابیس
+  onchain.ts         تأیید واریز TRC20/ERC20/BEP20
+  agent-execution.ts ثبت درآمد واقعی، ضدتکرار، تأیید واریز، ثبت خطا
+  jobs.ts            صف کار، تأیید/اجرا، یادآوری، کرون
+  report.ts          گزارش وضعیت از داده واقعی (+ Gemini اختیاری)
+  seed.ts            چارت سازمانی و تنظیمات اولیه (بدون داده ساختگی)
+src/app/api/...      اندپوینت‌های واقعی (فهرست بالا)
+src/app/control/     داشبورد ساختمان، دفتر هر کارمند، صفحه دیباگ
+```
