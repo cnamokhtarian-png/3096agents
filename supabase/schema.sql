@@ -234,8 +234,63 @@ ALTER TABLE agentos.market_snapshots ADD COLUMN IF NOT EXISTS change_pct NUMERIC
 ALTER TABLE agentos.market_snapshots ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'binance';
 ALTER TABLE agentos.market_snapshots ADD COLUMN IF NOT EXISTS fetched_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
 
+-- ستون‌های تکنیکال (RSI/MACD/MA/حمایت/مقاومت/نوسان). اگر این‌ها نباشند،
+-- ثبت اسنپ‌شات آریا و خواندن وضعیت بازار با خطای «column does not exist»
+-- شکست می‌خورد و حلقهٔ خودکار بی‌دلیل خطا می‌دهد. این بلوک idempotent است.
+ALTER TABLE agentos.market_snapshots ADD COLUMN IF NOT EXISTS rsi REAL NOT NULL DEFAULT 0;
+ALTER TABLE agentos.market_snapshots ADD COLUMN IF NOT EXISTS macd_hist REAL NOT NULL DEFAULT 0;
+ALTER TABLE agentos.market_snapshots ADD COLUMN IF NOT EXISTS ma20 REAL NOT NULL DEFAULT 0;
+ALTER TABLE agentos.market_snapshots ADD COLUMN IF NOT EXISTS ma50 REAL NOT NULL DEFAULT 0;
+ALTER TABLE agentos.market_snapshots ADD COLUMN IF NOT EXISTS support REAL NOT NULL DEFAULT 0;
+ALTER TABLE agentos.market_snapshots ADD COLUMN IF NOT EXISTS resistance REAL NOT NULL DEFAULT 0;
+ALTER TABLE agentos.market_snapshots ADD COLUMN IF NOT EXISTS volume_usdt REAL NOT NULL DEFAULT 0;
+ALTER TABLE agentos.market_snapshots ADD COLUMN IF NOT EXISTS volatility_pct REAL NOT NULL DEFAULT 0;
+ALTER TABLE agentos.market_snapshots ADD COLUMN IF NOT EXISTS candles INTEGER NOT NULL DEFAULT 0;
+
 CREATE INDEX IF NOT EXISTS market_snapshots_symbol_idx
   ON agentos.market_snapshots (symbol, fetched_at DESC);
+
+-- -------------------------------------------------------------------------
+-- ۵.۱) سیگنال‌های معاملهٔ آریا (trade_signals)
+-- این جدول پیش‌تر در فایل اسکیما نبود و روی دیتابیس تازه ساخته نمی‌شد؛
+-- نتیجه: چرخهٔ آریا و حلقهٔ خودکار با خطای «relation does not exist»
+-- شکست می‌خوردند. اکنون به‌صورت idempotent ساخته می‌شود.
+-- -------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS agentos.trade_signals (
+  id SERIAL PRIMARY KEY,
+  agent_id INTEGER NOT NULL,
+  agent_name TEXT NOT NULL,
+  symbol TEXT NOT NULL DEFAULT 'BTCUSDT',
+  side TEXT NOT NULL,
+  entry_price REAL NOT NULL,
+  take_profit REAL NOT NULL,
+  stop_loss REAL NOT NULL,
+  target_pct REAL NOT NULL DEFAULT 0,
+  stop_pct REAL NOT NULL DEFAULT 0,
+  risk_reward REAL NOT NULL DEFAULT 0,
+  leverage INTEGER NOT NULL DEFAULT 2,
+  position_usdt REAL NOT NULL DEFAULT 50,
+  estimated_profit_usdt REAL NOT NULL DEFAULT 0,
+  estimated_hours_min INTEGER NOT NULL DEFAULT 4,
+  estimated_hours_max INTEGER NOT NULL DEFAULT 12,
+  confidence REAL NOT NULL DEFAULT 0,
+  rsi REAL NOT NULL DEFAULT 0,
+  macd_hist REAL NOT NULL DEFAULT 0,
+  ma20 REAL NOT NULL DEFAULT 0,
+  ma50 REAL NOT NULL DEFAULT 0,
+  support REAL NOT NULL DEFAULT 0,
+  resistance REAL NOT NULL DEFAULT 0,
+  volatility_pct REAL NOT NULL DEFAULT 0,
+  data_source TEXT NOT NULL DEFAULT 'binance',
+  analysis_reason TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'pending',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS trade_signals_created_idx
+  ON agentos.trade_signals (created_at DESC);
+CREATE INDEX IF NOT EXISTS trade_signals_symbol_idx
+  ON agentos.trade_signals (symbol, created_at DESC);
 
 -- -------------------------------------------------------------------------
 -- ۶) وبهوک تلگرام (بدون تکرار) + اجرای کرون + رویدادهای سیستم/خطا

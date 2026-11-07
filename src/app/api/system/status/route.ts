@@ -16,6 +16,7 @@ import { ensureSeed } from "@/lib/seed";
 import { conf } from "@/lib/config";
 import { safeRoute } from "@/lib/api-response";
 import { geminiModelPlan } from "@/lib/ai";
+import { getLoopState } from "@/lib/autoloop";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -145,8 +146,9 @@ export async function GET(req: NextRequest) {
           last: lastCron[0] ?? null,
           recent: crons,
           secretConfigured: Boolean(conf("CRON_SECRET")),
-          schedule: "*/10 * * * * (market/queue) + روزانه reports",
+          schedule: "GitHub Actions هر ۱۵ دقیقه (job=loop) + کرون روزانهٔ Vercel (full/reports)",
         },
+        loop: await getLoopState().catch(() => null),
         queue: {
           pendingApprovals: Number(pendingApprovals[0]?.n || 0),
           unverifiedDeposits: Number(unverified[0]?.n || 0),
