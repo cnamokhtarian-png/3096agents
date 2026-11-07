@@ -92,6 +92,11 @@ export default function Control() {
   // تنظیمات
   const [fieldVals, setFieldVals] = useState<Record<string, string>>({});
 
+  // صرافی
+  const [exBal, setExBal] = useState<any>(null);
+  const [exPrice, setExPrice] = useState<any>(null);
+  const [orderForm, setOrderForm] = useState({ symbol: "BTC_IRT", side: "BUY", type: "LIMIT", quantity: "", price: "" });
+
   function blankProduct() {
     return {
       title: "", clientName: "", telegramUser: "", source: "کاتالوگ خدمات",
@@ -439,6 +444,41 @@ export default function Control() {
     }
   }
 
+  async function loadExchange() {
+    try {
+      const [b, p] = await Promise.all([
+        fetch("/api/exchange/balance").then((r) => r.json()).catch(() => null),
+        fetch(`/api/exchange/price?symbol=${orderForm.symbol}`).then((r) => r.json()).catch(() => null),
+      ]);
+      if (b && !b.error) setExBal(b);
+      else if (b?.error) notify(b.error);
+      if (p && !p.error) setExPrice(p);
+    } catch {
+      notify("خطای اتصال صرافی");
+    }
+  }
+
+  async function proposeOrder(e: any) {
+    e.preventDefault();
+    const res = await fetch("/api/exchange/propose", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ...orderForm,
+        quantity: Number(orderForm.quantity),
+        price: orderForm.price === "" ? undefined : Number(orderForm.price),
+      }),
+    });
+    const d = await res.json();
+    if (d.ok) {
+      notify("پیشنهاد ثبت شد — در تلگرام تأیید کنید 📩");
+      setOrderForm({ ...orderForm, quantity: "", price: "" });
+      load();
+    } else {
+      notify(d.error || "خطا");
+    }
+  }
+
   async function testTelegram() {
     const chatId = setup?.telegramAdminChat;
     if (!chatId) {
@@ -542,6 +582,53 @@ export default function Control() {
                   <p className={`text-xl font-black mt-1 ${c}`}>{v}</p>
                 </div>
               ))}
+            </div>
+
+            <div className="bg-white rounded-3xl border p-5">
+              <div className="flex flex-wrap justify-between items-center gap-2">
+                <h3 className="font-black">💱 صرافی تبدیل (A1 · آریا)</h3>
+                <button onClick={loadExchange} className="bg-slate-900 text-white px-4 py-1.5 rounded-full font-bold text-xs">
+                  🔄 به‌روزرسانی موجودی و قیمت
+                </button>
+              </div>
+              {!exBal ? (
+                <p className="text-slate-400 text-sm mt-2">برای دیدن موجودی واقعی، «به‌روزرسانی» را بزنید.</p>
+              ) : (
+                <div className="mt-2">
+                  <p className="text-sm font-bold">💰 موجودی اسپات:</p>
+                  <div className="flex gap-2 flex-wrap mt-1">
+                    {(exBal.spot || []).length === 0 && <span className="text-slate-400 text-xs">موجودی خالی است.</span>}
+                    {(exBal.spot || []).map((b: any) => (
+                      <span key={b.asset} className="bg-emerald-50 border border-emerald-200 rounded-full px-3 py-1 text-xs font-bold">
+                        {b.asset}: {fa(b.free)}
+                      </span>
+                    ))}
+                  </div>
+                  {exPrice && !exPrice.error && (
+                    <p className="text-sm mt-2">📊 {exPrice.symbol} — خرید: {fa(Math.round(exPrice.bid))} / فروش: {fa(Math.round(exPrice.ask))}</p>
+                  )}
+                </div>
+              )}
+              <form onSubmit={proposeOrder} className="grid grid-cols-2 md:grid-cols-6 gap-2 mt-3 border-t pt-3">
+                <select value={orderForm.symbol} onChange={(e) => setOrderForm({ ...orderForm, symbol: e.target.value })} className="border rounded-xl p-2 text-sm" dir="ltr">
+                  <option value="BTC_IRT">BTC_IRT</option>
+                  <option value="ETH_IRT">ETH_IRT</option>
+                  <option value="SOL_IRT">SOL_IRT</option>
+                  <option value="USDT_IRT">USDT_IRT</option>
+                </select>
+                <select value={orderForm.side} onChange={(e) => setOrderForm({ ...orderForm, side: e.target.value })} className="border rounded-xl p-2 text-sm">
+                  <option value="BUY">🟢 خرید</option>
+                  <option value="SELL">🔴 فروش</option>
+                </select>
+                <select value={orderForm.type} onChange={(e) => setOrderForm({ ...orderForm, type: e.target.value })} className="border rounded-xl p-2 text-sm">
+                  <option value="LIMIT">لیمیت</option>
+                  <option value="MARKET">بازار</option>
+                </select>
+                <input required type="number" step="any" value={orderForm.quantity} onChange={(e) => setOrderForm({ ...orderForm, quantity: e.target.value })} placeholder="مقدار *" className="border rounded-xl p-2 text-sm" />
+                <input type="number" step="any" value={orderForm.price} onChange={(e) => setOrderForm({ ...orderForm, price: e.target.value })} placeholder="قیمت (لیمیت)" className="border rounded-xl p-2 text-sm" />
+                <button className="bg-amber-500 text-black rounded-xl font-bold text-sm">پیشنهاد 📩</button>
+              </form>
+              <p className="text-[11px] text-slate-400 mt-2">سفارش فقط «پیشنهاد» می‌شود و بعد از تأیید شما در تلگرام اجرا می‌گردد. سقف ریسک خودکار چک می‌شود.</p>
             </div>
 
             {(setup?.missing?.length > 0 || !walletForm.address) && (
@@ -1064,6 +1151,7 @@ export default function Control() {
               <div className="grid md:grid-cols-3 gap-2 mt-3">
                 <select value={fieldVals["exchange_name"] || ""} onChange={(e) => setFieldVals((p) => ({ ...p, exchange_name: e.target.value }))} className="border rounded-xl p-2.5 text-sm">
                   <option value="">انتخاب صرافی...</option>
+                  <option value="tabdeal">تبدیل (Tabdeal)</option>
                   <option value="nobitex">نوبیتکس</option>
                   <option value="wallex">والکس</option>
                   <option value="binance">بایننس</option>

@@ -87,6 +87,51 @@ export async function POST(req: NextRequest) {
         }
       }
     }
+    // اجرای سفارش صرافی بعد از تأیید انسانی (فقط اسپات)
+    if (newStatus && taskId > 0) {
+      const found2: any = await db.select().from(tasks).where(eq(tasks.id, taskId));
+      const t2 = found2[0];
+      if (t2?.actionType === "order") {
+        if (newStatus === "approved") {
+          try {
+            const o = JSON.parse(t2.payload || "{}");
+            const { newOrder } = await import("@/lib/exchange");
+            const res: any = await newOrder({
+              symbol: o.symbol,
+              side: o.side,
+              type: o.type,
+              quantity: String(o.quantity),
+              price: o.price ? String(o.price) : undefined,
+            });
+            await db
+              .update(tasks)
+              .set({ payload: t2.payload + `\n\n✅ اجرا شد: orderId=${res.orderId} status=${res.status}` })
+              .where(eq(tasks.id, taskId));
+            const ac = process.env.TELEGRAM_ADMIN_CHAT_ID;
+            if (ac) {
+              await sendRealTelegramMessage(
+                ac,
+                `✅ <b>سفارش صرافی اجرا شد</b>\n• ${o.side} ${o.quantity} ${o.symbol}\n• orderId: <code>${res.orderId}</code>\n• وضعیت: ${res.status}`
+              );
+            }
+          } catch (e: any) {
+            await db
+              .update(tasks)
+              .set({ payload: t2.payload + `\n\n❌ خطای اجرا: ${e?.message || e}` })
+              .where(eq(tasks.id, taskId));
+            const ac = process.env.TELEGRAM_ADMIN_CHAT_ID;
+            if (ac) {
+              await sendRealTelegramMessage(ac, `❌ <b>اجرای سفارش ناموفق بود</b>\n${e?.message || e}`);
+            }
+          }
+        } else {
+          const ac = process.env.TELEGRAM_ADMIN_CHAT_ID;
+          if (ac) {
+            await sendRealTelegramMessage(ac, `❌ <b>سفارش صرافی رد شد و اجرا نشد.</b>`);
+          }
+        }
+      }
+    }
     await db.insert(agentLogs).values({
       agent: "Webhook تلگرام",
       action: data.startsWith("approve")
