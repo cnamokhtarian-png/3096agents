@@ -251,16 +251,23 @@ export function buildTechnicalSetup(input: {
       ? Number(input.availableUsdt)
       : null;
   const riskPct = Math.min(20, Math.max(0.1, Number(input.riskPct ?? 2)));
-  const positionUsdt =
+  const rawPositionUsdt =
     available !== null && Number.isFinite(available) && available > 0
       ? Math.round(available * (riskPct / 100) * 100) / 100
       : null;
+  // پوزیشنِ صفر یا ناچیز (مثلاً وقتی موجودی واقعی نزدیک صفر است و حاصلِ
+  // درصد ریسک به 0 گرد می‌شود) عملاً «بدون مبلغ» است؛ نمایش «0 USDT» روی
+  // کارت گمراه‌کننده است، پس مبلغ تعیین‌نشده می‌ماند تا مدیرعامل مبلغ بدهد.
+  const positionUsdt =
+    rawPositionUsdt !== null && rawPositionUsdt > 0 ? rawPositionUsdt : null;
   const sizingSource: "exchange_balance" | "unavailable" =
     positionUsdt !== null ? "exchange_balance" : "unavailable";
   const sizingNote =
     positionUsdt !== null
       ? `${riskPct}٪ از موجودی واقعی صرافی (${available} USDT)`
-      : "موجودی واقعی صرافی در دسترس نیست (کلید API صرافی ست نشده)؛ مبلغ را خودتان تعیین کنید.";
+      : available !== null
+        ? `موجودی آزاد واقعی USDT در صرافی ${available} است (صفر/ناچیز)؛ مبلغ سفارش را خودتان تعیین کنید.`
+        : "موجودی واقعی صرافی در دسترس نیست (کلید API صرافی ست نشده)؛ مبلغ را خودتان تعیین کنید.";
 
   const maxLossUsdt =
     positionUsdt !== null
