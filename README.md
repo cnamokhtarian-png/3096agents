@@ -210,6 +210,22 @@ Binance USD-M Futures میفرستد و فقط سود محققشدهٔ زنده 
 شوند. دادهٔ نمونهٔ اولیه (کارنامه، خاطرات و یک پیشنهاد منتظر تأیید) بهصورت خودکار
 و idempotent seed میشود.
 
+### 🌐 اجرای آنلاین (Production)
+
+- آدرس اصلی: `https://freelance-agent-os.vercel.app` — میز کار آریا در
+  `/agents/crypto-arya` و مرکز کنترل در `/control`.
+- Cronها: `/api/company/tick` هر روز ۰۶:۰۰ UTC (تپش کل شرکت + بستن خودکار
+  پوزیشنها + اسکن) و `/api/leaderboard/cron` اول هر ماه.
+- متغیرهای موردنیاز A1: `NEXT_PUBLIC_APP_URL`، `CRON_SECRET`،
+  `TELEGRAM_BOT_TOKEN`، `TELEGRAM_CHAT_ID`، `TELEGRAM_WEBHOOK_SECRET` و در صورت
+  تمایل `CRYPTOPANIC_API_KEY` و `EXCHANGE_API_KEY`/`EXCHANGE_API_SECRET`.
+- برای دکمههای شیشهای تلگرام، Webhook بات را روی
+  `https://freelance-agent-os.vercel.app/api/telegram/webhook` با هدر
+  `X-Telegram-Bot-Api-Secret-Token` برابر `TELEGRAM_WEBHOOK_SECRET` تنظیم کنید.
+- امنیت کلید صرافی: فقط دسترسی «Futures Trading» بدهید، **Withdrawals را
+  غیرفعال** کنید، IP مجاز محدود کنید و کلیدها را بهصورت دورهای بچرخانید.
+  کلیدها هرگز در مخزن، دیتابیس یا پاسخ API قرار نمیگیرند.
+
 ## Deployment (Supabase + Vercel)
 
 - Database: existing Supabase project `auralis` — tables live in the isolated

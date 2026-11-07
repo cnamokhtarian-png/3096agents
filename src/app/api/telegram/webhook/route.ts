@@ -214,6 +214,15 @@ export async function GET() {
     webhook: "active",
     bot: "@sina_freelance_agent_bot",
     mode: process.env.TELEGRAM_BOT_TOKEN ? "live_telegram_api" : "simulation+webhook",
-    inline_buttons: ["approve", "reject", "edit"],
+    inline_buttons: [
+      "approve",
+      "reject",
+      "edit",
+      "trade_approve",
+      "trade_reject",
+    ],
+    trader_webhook_url: process.env.NEXT_PUBLIC_APP_URL
+      ? `${process.env.NEXT_PUBLIC_APP_URL}/api/telegram/webhook`
+      : "NEXT_PUBLIC_APP_URL تنظیم نشده است",
   });
 }
