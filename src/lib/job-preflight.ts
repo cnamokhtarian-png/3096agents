@@ -4,6 +4,7 @@ import {
   type ExchangeStatus,
 } from "@/lib/exchange";
 import { ENV } from "@/lib/env";
+import { checkLiveGate } from "@/lib/live-gate";
 import { telegramConfigured } from "@/lib/telegram";
 
 /**
@@ -138,6 +139,12 @@ export async function preflightJobKind(
       exchange = opts.exchange ?? (await exchangeStatus());
       if (!exchange.canExecuteOrders) {
         blockers.push(...exchange.blockers.map(blockerFromExchange));
+      } else {
+        // دروازهٔ معاملهٔ واقعی: سرمایهٔ ثبت‌شده + سقف‌های روزانه + kill-switch
+        const gate = await checkLiveGate(qty || quantity || undefined);
+        for (const b of gate.blockers) {
+          blockers.push({ code: b.code, label: b.label, missing: [], action: b.action });
+        }
       }
       break;
     }

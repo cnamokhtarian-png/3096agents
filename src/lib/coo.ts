@@ -29,6 +29,7 @@ import { scanBountyFeeds } from "@/lib/bounty";
 import { createJob } from "@/lib/jobs";
 import { escapeHtml, notifyAdmin, telegramConfigured } from "@/lib/telegram";
 import { activeGeminiModel, generateGeminiText, geminiConfigured } from "@/lib/ai";
+import { capOrderSize, getLiveGate } from "@/lib/live-gate";
 
 export const COO_NAME = "RNAI · مدیر ارشد اجرایی (COO)";
 
@@ -456,6 +457,21 @@ export async function runAriaMarketScan(options?: { forceCardIfNonePending?: boo
       b.riskReward - a.riskReward,
   );
   const best = setups[0];
+
+  // ── سقف سرمایهٔ خرد: مبلغ پیشنهادی هرگز از سقف سفارش دروازهٔ معامله
+  // بیشتر نمی‌شود؛ حتی اگر درصد ریسک عدد بزرگ‌تری بدهد.
+  const gate = await getLiveGate();
+  if (best.positionUsdt !== null) {
+    const capped = await capOrderSize(best.positionUsdt);
+    if (capped.usdt !== null && capped.usdt < best.positionUsdt) {
+      best.positionUsdt = capped.usdt;
+      best.sizingNote = `${best.sizingNote} • محدود به سقف سرمایهٔ خرد ${gate.maxOrderUsdt} USDT`;
+      best.maxLossUsdt =
+        Math.round(best.positionUsdt * (best.stopPct / 100) * best.leverage * 100) / 100;
+      best.estimatedProfitUsdt =
+        Math.round(best.positionUsdt * (best.targetPct / 100) * best.leverage * 100) / 100;
+    }
+  }
 
   const summaryDetail = setups
     .map(

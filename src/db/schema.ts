@@ -276,3 +276,73 @@ export const systemEvents = agentos.table("system_events", {
   meta: jsonb("meta").notNull().default({}),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
 });
+
+// ---------------------------------------------------------------------------
+// Ledger & Reward layer (کتابخانهٔ مالی داخلی + پاداش مرکب)
+//
+// چرا لازم است؟
+//   درآمد واقعی (transactions/agent_activity_logs) فقط «شاهدِ بیرونی» است.
+//   برای اینکه سیستم بتواند «موجودی اولیهٔ سرمایه خرد»، «سود مرکب» و
+//   «پاداش هر ترید موفق آریا» را دقیق و ضدتکرار حساب کند، یک دفتر کل
+//   دوطرفه (double-entry) اضافه شده است:
+//     ledger_entries → هر تغییر موجودی، با ارجاع به تراکنش/کار/سفارش واقعی
+//     agent_rewards  → ثبت پاداش/امتیاز هر کارمند (یک ردیف به‌ازای هر رویداد)
+//     reward_rules   → قواعد پاداش و درصد تقسیم سود (قابل ویرایش از پنل)
+//
+// قاعدهٔ طلایی: هیچ ردیفی در ledger بدون reference واقعی (هش تراکنش یا
+// شناسهٔ سفارش تأییدشدهٔ صرافی) نوشته نمی‌شود. موجودی «محاسبه» می‌شود
+// (SUM)، ذخیره نمی‌شود؛ بنابراین هرگز از واقعیت جدا نمی‌افتد.
+// ---------------------------------------------------------------------------
+
+export const ledgerAccounts = agentos.table("ledger_accounts", {
+  id: serial("id").primaryKey(),
+  code: text("code").notNull().unique(), // capital | exchange | wallet | rewards | profit | fees | profit_share
+  name: text("name").notNull(),
+  kind: text("kind").notNull().default("asset"), // asset | equity | revenue | expense
+  asset: text("asset").notNull().default("USDT"),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+});
+
+export const ledgerEntries = agentos.table("ledger_entries", {
+  id: bigserial("id", { mode: "number" }).primaryKey(),
+  entryGroup: text("entry_group").notNull(), // هر ثبت دوطرفه یک group یکتا دارد
+  accountCode: text("account_code").notNull(),
+  agentId: integer("agent_id"),
+  agentName: text("agent_name").notNull().default(""),
+  debitUsdt: real("debit_usdt").notNull().default(0),
+  creditUsdt: real("credit_usdt").notNull().default(0),
+  kind: text("kind").notNull(), // capital_in | revenue | trade_pnl | reward | withdraw | fee | profit_share
+  memo: text("memo").notNull().default(""),
+  refType: text("ref_type").notNull().default(""), // transaction | exchange_order | job | manual
+  refId: text("ref_id").notNull().default(""),
+  /** کلید یکتای ضدتکرار: مثلاً revenue:<txHash> یا pnl:<orderId> */
+  idempotencyKey: text("idempotency_key").notNull().unique(),
+  meta: jsonb("meta").notNull().default({}),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+});
+
+export const rewardRules = agentos.table("reward_rules", {
+  id: serial("id").primaryKey(),
+  key: text("key").notNull().unique(),
+  value: text("value").notNull().default(""),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
+});
+
+export const agentRewards = agentos.table("agent_rewards", {
+  id: bigserial("id", { mode: "number" }).primaryKey(),
+  agentId: integer("agent_id"),
+  agentName: text("agent_name").notNull(),
+  source: text("source").notNull().default("trade"), // trade | bounty | mission | revenue
+  jobId: integer("job_id"),
+  tradeProfitUsdt: real("trade_profit_usdt").notNull().default(0),
+  ruleKey: text("rule_key").notNull().default("default"),
+  rewardUsdt: real("reward_usdt").notNull().default(0),
+  points: integer("points").notNull().default(0),
+  /** پاداش به موجودی سرمایه اضافه شد (سود مرکب) یا فقط ثبت دفتری شد */
+  compounded: boolean("compounded").notNull().default(false),
+  ledgerGroup: text("ledger_group").notNull().default(""),
+  idempotencyKey: text("idempotency_key").notNull().unique(),
+  detail: text("detail").notNull().default(""),
+  meta: jsonb("meta").notNull().default({}),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+});

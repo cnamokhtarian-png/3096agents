@@ -26,6 +26,8 @@ import { buildAgentFacts } from "@/lib/report";
 import { gatherMissionFacts, type MissionAgent } from "@/lib/missions";
 import { generateGeminiText, geminiConfigured } from "@/lib/ai";
 import { conf } from "@/lib/config";
+import { checkLiveGate } from "@/lib/live-gate";
+import { recordConfirmedIncomeInLedger, settleTradeOrder } from "@/lib/ledger";
 import {
   approvalVerdict,
   preflightJobKind,
@@ -392,6 +394,19 @@ async function executeTrade(job: JobRecord, _actor: string): Promise<ExecutionRe
   const side = String(p.side || "BUY").toUpperCase() as "BUY" | "SELL";
   if (!symbol) return markFailed(job, "نماد معاملاتی در Payload مشخص نشده است", "invalid_payload");
 
+  // ── دروازهٔ معاملهٔ واقعی (سقف خرد، سرمایهٔ ثبت‌شده، kill-switch) ──
+  // این بررسی پیش از تماس با صرافی انجام می‌شود؛ اگر برقرار نباشد هیچ
+  // درخواستی به صرافی نمی‌رود (به‌جای اینکه با خطای مبهم برگردد).
+  const intendedUsdt = p.quoteOrderQty ? Number(p.quoteOrderQty) : undefined;
+  const gate = await checkLiveGate(intendedUsdt);
+  if (!gate.allowed) {
+    return markNeedsConfig(
+      job,
+      `دروازهٔ معاملهٔ واقعی اجازه نمی‌دهد: ${gate.message}`,
+      "live_gate_blocked",
+    );
+  }
+
   try {
     const order = await placeRealOrder({
       symbol,
@@ -435,6 +450,31 @@ async function executeTrade(job: JobRecord, _actor: string): Promise<ExecutionRe
       "success",
       `orderId=${order.orderId} status=${order.status}`
     );
+
+    // ── دفتر کل + لایهٔ پاداش: سود/زیان واقعی از سفارش فروش محاسبه
+    // می‌شود و پاداش/امتیاز همان لحظه برای کارمند ثبت می‌گردد.
+    let settlement: Record<string, unknown> | null = null;
+    try {
+      const [saved] = await db
+        .select()
+        .from(exchangeOrders)
+        .where(eq(exchangeOrders.clientOrderId, order.clientOrderId))
+        .limit(1);
+      if (saved) {
+        const settled = await settleTradeOrder(saved.id);
+        settlement = settled as unknown as Record<string, unknown>;
+      }
+    } catch (e: any) {
+      await db
+        .insert(systemEvents)
+        .values({
+          level: "warn",
+          scope: "ledger",
+          message: `تسویهٔ دفتری سفارش ${order.clientOrderId} ناموفق بود: ${e?.message || e}`,
+          meta: { jobId: job.id, symbol },
+        })
+        .catch(() => {});
+    }
 
     // اگر سود محقق‌شده با شاهد تراکنش همراه باشد، همان جریان تأیید واقعی طی می‌شود
     let profit: Record<string, unknown> | null = null;
@@ -480,6 +520,7 @@ async function executeTrade(job: JobRecord, _actor: string): Promise<ExecutionRe
       ok: true,
       result: {
         order,
+        settlement,
         profit,
         note:
           "سفارش واقعاً به صرافی ارسال شد. سود/زیان فقط با شاهد واریز (هش تراکنش) در درآمد ثبت می‌شود.",
@@ -514,11 +555,29 @@ async function executeConfirmDeposit(job: JobRecord, actor: string): Promise<Exe
   });
   if (!res.ok) return markFailed(job, res.error || "تأیید واریز ناموفق بود", "confirm_failed");
 
+  // ثبت موازی در کتابخانهٔ مالی داخلی (کیف پول واحد ↑ / درآمد ↓)
+  let ledger: Record<string, unknown> | null = null;
+  if (res.transaction) {
+    try {
+      const posted = await recordConfirmedIncomeInLedger({
+        id: res.transaction.id,
+        title: res.transaction.title,
+        amountUsdt: Number(res.transaction.amountUsdt),
+        txHash: res.transaction.txHash,
+        agentName: res.transaction.agentName,
+      });
+      ledger = posted as unknown as Record<string, unknown>;
+    } catch (e: any) {
+      ledger = { ok: false, error: e?.message || String(e) };
+    }
+  }
+
   return {
     ok: true,
     result: {
       transaction: res.transaction,
       duplicate: res.duplicate ?? false,
+      ledger,
       note: "واریز تأیید و در دفتر درآمد واقعی ثبت شد.",
     },
   };

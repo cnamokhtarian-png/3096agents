@@ -118,6 +118,11 @@ export default function Control() {
   const [exInfo, setExInfo] = useState<any>(null);
   const [exForm, setExForm] = useState({ apiKey: "", apiSecret: "", testnet: true });
   const [exTest, setExTest] = useState<any>(null);
+  // 📒 دفتر کل + 🚦 دروازهٔ معاملهٔ واقعی
+  const [ledgerData, setLedgerData] = useState<any>(null);
+  const [capForm, setCapForm] = useState({ amountUsdt: "", txHash: "", insideExchange: true, note: "" });
+  const [ruleForm, setRuleForm] = useState<any>(null);
+  const [gateForm, setGateForm] = useState<any>(null);
 
   const [newAgent, setNewAgent] = useState({
     name: "",
@@ -159,6 +164,15 @@ export default function Control() {
     fetch("/api/exchange")
       .then((r) => r.json())
       .then((d) => d?.ok && setExInfo(d))
+      .catch(() => {});
+    fetch("/api/ledger")
+      .then((r) => r.json())
+      .then((d) => {
+        if (!d?.ok) return;
+        setLedgerData(d);
+        setRuleForm((prev: any) => prev || d.rules);
+        setGateForm((prev: any) => prev || d.gate?.config || null);
+      })
       .catch(() => {});
     setProjects(Array.isArray(p) ? p : []);
     setTasks(Array.isArray(t) ? t : []);
@@ -321,6 +335,89 @@ export default function Control() {
     } catch (err: any) {
       notify(`⚠️ ${err.message}`);
     }
+  }
+
+  // ── 📒 دفتر کل: ثبت سرمایهٔ اولیه، قواعد پاداش و دروازهٔ معامله ──────
+  async function ledgerAction(action: string, payload: any = {}, okMsg?: string) {
+    setBusy(`ledger-${action}`);
+    try {
+      const res = await fetch("/api/ledger", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action, ...payload }),
+      });
+      const d = await res.json();
+      if (d.ok) {
+        notify(okMsg || "انجام شد ✅");
+        const fresh = await fetch("/api/ledger").then((r) => r.json()).catch(() => null);
+        if (fresh?.ok) {
+          setLedgerData(fresh);
+          setRuleForm(fresh.rules);
+          setGateForm(fresh.gate?.config || null);
+        }
+      } else {
+        notify(`⚠️ ${d.error || "عملیات انجام نشد"}`);
+      }
+      return d;
+    } catch (e: any) {
+      notify(`⚠️ ${e?.message || e}`);
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function seedCapitalForm(e: any) {
+    e.preventDefault();
+    const amount = Number(capForm.amountUsdt);
+    if (!(amount > 0)) return notify("مبلغ سرمایه را وارد کنید");
+    if (!capForm.insideExchange && capForm.txHash.trim().length < 16)
+      return notify("برای واریز بیرونی، هش تراکنش واقعی لازم است");
+    const confirmTxt = capForm.insideExchange
+      ? `موجودی فعلی داخل صرافی را ${amount} USDT به‌عنوان سرمایهٔ اولیه ثبت کنم؟`
+      : `واریز ${amount} USDT با هش ${capForm.txHash.slice(0, 10)}… ثبت شود؟`;
+    if (!confirm(confirmTxt)) return;
+    await ledgerAction(
+      "seed_capital",
+      {
+        amountUsdt: amount,
+        txHash: capForm.txHash.trim(),
+        insideExchange: capForm.insideExchange,
+        note: capForm.note,
+      },
+      `سرمایهٔ اولیه ${amount} USDT ثبت شد ✅`,
+    );
+    setCapForm({ amountUsdt: "", txHash: "", insideExchange: true, note: "" });
+  }
+
+  async function saveRules() {
+    await ledgerAction(
+      "set_rules",
+      {
+        profitSharePct: Number(ruleForm?.profitSharePct),
+        pointsPerUsdt: Number(ruleForm?.pointsPerUsdt),
+        successPoints: Number(ruleForm?.successPoints),
+        compound: Boolean(ruleForm?.compound),
+        maxDailyCompoundPct: Number(ruleForm?.maxDailyCompoundPct),
+        minProfitUsdt: Number(ruleForm?.minProfitUsdt),
+      },
+      "قواعد پاداش ذخیره شد ✅",
+    );
+  }
+
+  async function saveGate() {
+    if (!confirm("سقف‌های معاملهٔ واقعی با این مقادیر اعمال شود؟")) return;
+    await ledgerAction(
+      "set_gate",
+      {
+        confirm: "APPLY_LIVE_GATE",
+        riskPctPerTrade: Number(gateForm?.riskPctPerTrade),
+        maxOrderUsdt: Number(gateForm?.maxOrderUsdt),
+        maxOrdersPerDay: Number(gateForm?.maxOrdersPerDay),
+        maxDailyVolumeUsdt: Number(gateForm?.maxDailyVolumeUsdt),
+        maxDailyLossUsdt: Number(gateForm?.maxDailyLossUsdt),
+      },
+      "سقف‌های دروازه ذخیره شد ✅",
+    );
   }
 
   async function jobAction(id: number, action: "approve" | "reject" | "retry") {
@@ -608,6 +705,7 @@ export default function Control() {
     ["chats", "💬 گفتگوها"],
     ["approvals", "✅ صف تأیید"],
     ["earnings", "💰 کیف پول و درآمد"],
+    ["ledger", "📒 دفتر کل و پاداش"],
     ["tools", "⚡ ابزارها"],
     ["telegram", "📩 تلگرام"],
     ["logs", "🧾 گزارش کارمندان"],
@@ -1891,6 +1989,326 @@ export default function Control() {
                             </td>
                           </tr>
                         ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            </section>
+          )}
+
+          {/* ═══════════════ دفتر کل و پاداش + دروازهٔ معاملهٔ واقعی ═══════════════ */}
+          {view === "ledger" && (
+            <section className="mt-4 space-y-4">
+              <div className="grid gap-3 md:grid-cols-4">
+                {[
+                  ["سرمایهٔ کاری (صرافی + کیف پول)", fa(ledgerData?.summary?.workingCapitalUsdt ?? 0), "text-emerald-600"],
+                  ["سرمایهٔ ثبت‌شده (مالک)", fa(ledgerData?.summary?.seededCapitalUsdt ?? 0), "text-slate-800"],
+                  ["سود محقق‌شدهٔ معاملات", fa(ledgerData?.summary?.tradePnlUsdt ?? 0), "text-sky-600"],
+                  ["پاداش پرداخت‌شده به کارمندان", fa(ledgerData?.summary?.rewards?.paidUsdt ?? 0), "text-violet-600"],
+                ].map(([l, v, c]) => (
+                  <div key={l as string} className="rounded-3xl border bg-white p-4">
+                    <p className="text-[11px] text-slate-500">{l as string}</p>
+                    <p className={`mt-1 text-xl font-black ${c as string}`}>
+                      {v as string} <span className="text-[10px] font-normal">USDT</span>
+                    </p>
+                  </div>
+                ))}
+              </div>
+
+              {/* 🚦 دروازهٔ معاملهٔ واقعی */}
+              <div className="rounded-3xl border bg-white p-5">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <h3 className="font-black">🚦 دروازهٔ معاملهٔ واقعی (Live Trading Gate)</h3>
+                    <p className="mt-1 max-w-2xl text-[11px] leading-5 text-slate-500">
+                      تا وقتی همهٔ این شرط‌ها برقرار نباشد، هیچ سفارشی به صرافی نمی‌رود: کلید صرافی،
+                      قفل <code dir="ltr">AGENT_TRADING_ENABLED=true</code>، سرمایهٔ ثبت‌شده در دفتر، و
+                      رعایت سقف‌های روزانه. تصمیم معامله همچنان با آریا + تأیید [✅] شماست.
+                    </p>
+                  </div>
+                  <div className="text-left">
+                    <span
+                      className={`rounded-full px-3 py-1 text-[10px] font-black ${
+                        ledgerData?.gate?.check?.allowed
+                          ? "bg-emerald-100 text-emerald-700"
+                          : "bg-amber-100 text-amber-800"
+                      }`}
+                    >
+                      {ledgerData?.gate?.modeLabel || "—"}
+                    </span>
+                    <p className="mt-2 text-[10px] text-slate-500">
+                      سفارش امروز: {fa(ledgerData?.gate?.check?.usage?.orders ?? 0)} /{" "}
+                      {fa(ledgerData?.gate?.config?.maxOrdersPerDay ?? 0)} • حجم امروز:{" "}
+                      {fa(ledgerData?.gate?.check?.usage?.volumeUsdt ?? 0)} USDT • سود/زیان ۲۴ ساعت:{" "}
+                      {fa(ledgerData?.gate?.check?.usage?.realisedPnlUsdt ?? 0)} USDT
+                    </p>
+                  </div>
+                </div>
+
+                {ledgerData?.gate?.check?.blockers?.length > 0 && (
+                  <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 p-3">
+                    <p className="text-[11px] font-black text-amber-900">🔒 الان قفل است — دلیل دقیق:</p>
+                    <ul className="mt-1 space-y-1">
+                      {ledgerData.gate.check.blockers.map((b: any) => (
+                        <li key={b.code} className="text-[10px] leading-5 text-amber-800">
+                          • {b.label}
+                          <span className="block text-amber-700/80">↳ {b.action}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {gateForm && (
+                  <div className="mt-4 grid gap-2 md:grid-cols-5">
+                    {[
+                      ["riskPctPerTrade", "ریسک هر معامله (٪)"],
+                      ["maxOrderUsdt", "سقف هر سفارش (USDT)"],
+                      ["maxOrdersPerDay", "سقف سفارش روز"],
+                      ["maxDailyVolumeUsdt", "سقف حجم روز (USDT)"],
+                      ["maxDailyLossUsdt", "سقف ضرر روز (USDT)"],
+                    ].map(([k, l]) => (
+                      <label key={k} className="block">
+                        <span className="text-[10px] text-slate-500">{l}</span>
+                        <input
+                          type="number"
+                          min={0}
+                          step="any"
+                          value={gateForm[k] ?? ""}
+                          onChange={(e) => setGateForm({ ...gateForm, [k]: e.target.value })}
+                          className="mt-1 w-full rounded-xl border p-2 text-sm"
+                        />
+                      </label>
+                    ))}
+                    <div className="flex flex-wrap items-end gap-2 md:col-span-5">
+                      <button
+                        onClick={saveGate}
+                        disabled={busy === "ledger-set_gate"}
+                        className="rounded-xl bg-slate-900 px-4 py-2 text-xs font-black text-white disabled:opacity-40"
+                      >
+                        💾 ذخیره سقف‌ها
+                      </button>
+                      <button
+                        onClick={() => ledgerAction("verify_keys", {}, "کلید صرافی بررسی شد")}
+                        disabled={busy === "ledger-verify_keys"}
+                        className="rounded-xl bg-sky-500 px-4 py-2 text-xs font-black text-white disabled:opacity-40"
+                      >
+                        🔍 تست بی‌خطر کلید و قیمت
+                      </button>
+                      {ledgerData?.gate?.config?.halted ? (
+                        <button
+                          onClick={() => ledgerAction("resume", {}, "توقف برداشته شد ✅")}
+                          className="rounded-xl bg-emerald-500 px-4 py-2 text-xs font-black text-black"
+                        >
+                          ▶️ برداشتن توقف اضطراری
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => {
+                            const reason = prompt("دلیل توقف اضطراری معامله:");
+                            if (reason === null) return;
+                            ledgerAction("halt", { reason }, "توقف اضطراری فعال شد 🛑");
+                          }}
+                          className="rounded-xl bg-red-600 px-4 py-2 text-xs font-black text-white"
+                        >
+                          🛑 توقف اضطراری
+                        </button>
+                      )}
+                      <span className="text-[10px] text-slate-400">
+                        پیش‌فرض‌ها برای سرمایهٔ خرد تنظیم شده‌اند؛ بالا بردن سقف‌ها نیازمند تأیید صریح است.
+                      </span>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="grid gap-4 lg:grid-cols-2">
+                {/* ثبت سرمایهٔ اولیه */}
+                <form onSubmit={seedCapitalForm} className="rounded-3xl border bg-white p-5">
+                  <h3 className="font-black">🏦 ثبت سرمایهٔ اولیه</h3>
+                  <p className="mt-1 text-[11px] leading-5 text-slate-500">
+                    سرمایهٔ خرد را یک‌بار ثبت کنید تا اندازهٔ سفارش‌ها، سود مرکب و پاداش‌ها معنا پیدا کنند.
+                    اگر پول از قبل داخل صرافی است، گزینهٔ «موجودی داخل صرافی» را بزنید؛ برای واریز بیرونی
+                    هش تراکنش الزامی است.
+                  </p>
+                  <div className="mt-3 space-y-2">
+                    <input
+                      type="number"
+                      step="any"
+                      min={0}
+                      value={capForm.amountUsdt}
+                      onChange={(e) => setCapForm({ ...capForm, amountUsdt: e.target.value })}
+                      placeholder="مبلغ سرمایه (USDT)"
+                      className="w-full rounded-xl border p-2.5 text-sm"
+                    />
+                    <label className="flex items-center gap-2 text-[11px] text-slate-600">
+                      <input
+                        type="checkbox"
+                        checked={capForm.insideExchange}
+                        onChange={(e) => setCapForm({ ...capForm, insideExchange: e.target.checked })}
+                      />
+                      موجودی از قبل داخل صرافی است (بدون هش واریز)
+                    </label>
+                    {!capForm.insideExchange && (
+                      <input
+                        value={capForm.txHash}
+                        onChange={(e) => setCapForm({ ...capForm, txHash: e.target.value })}
+                        placeholder="هش تراکنش واریز (txHash)"
+                        dir="ltr"
+                        className="w-full rounded-xl border p-2.5 font-mono text-xs"
+                      />
+                    )}
+                    <input
+                      value={capForm.note}
+                      onChange={(e) => setCapForm({ ...capForm, note: e.target.value })}
+                      placeholder="یادداشت (اختیاری)"
+                      className="w-full rounded-xl border p-2.5 text-sm"
+                    />
+                  </div>
+                  <button
+                    disabled={busy === "ledger-seed_capital"}
+                    className="mt-3 w-full rounded-xl bg-emerald-500 py-2.5 text-sm font-black text-black disabled:opacity-40"
+                  >
+                    ثبت سرمایه ✅
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => ledgerAction("backfill", {}, "درآمدهای تأییدشده به دفتر منتقل شد")}
+                    className="mt-2 w-full rounded-xl border py-2 text-[11px] font-bold text-slate-600"
+                  >
+                    🔁 انتقال درآمدهای تأییدشدهٔ قبلی به دفتر کل
+                  </button>
+                </form>
+
+                {/* قواعد پاداش */}
+                <div className="rounded-3xl border bg-white p-5">
+                  <h3 className="font-black">🏅 قواعد پاداش و سود مرکب</h3>
+                  <p className="mt-1 text-[11px] leading-5 text-slate-500">
+                    پاداش فقط از <b>سود واقعی و محقق‌شدهٔ</b> معاملهٔ بسته‌شده پرداخت می‌شود؛ نه از
+                    پیش‌بینی و نه از ضرر. با روشن بودن «سود مرکب»، پاداش داخل سرمایه می‌ماند و سقف
+                    روزانه از رشد نماییِ ناسالم جلوگیری می‌کند.
+                  </p>
+                  {ruleForm && (
+                    <div className="mt-3 grid grid-cols-2 gap-2">
+                      {[
+                        ["profitSharePct", "سهم کارمند از سود (٪)"],
+                        ["pointsPerUsdt", "امتیاز به‌ازای هر USDT سود"],
+                        ["successPoints", "امتیاز پایهٔ هر ترید موفق"],
+                        ["maxDailyCompoundPct", "سقف سود مرکب روزانه (٪)"],
+                        ["minProfitUsdt", "حداقل سود برای پاداش (USDT)"],
+                      ].map(([k, l]) => (
+                        <label key={k} className="block">
+                          <span className="text-[10px] text-slate-500">{l}</span>
+                          <input
+                            type="number"
+                            step="any"
+                            min={0}
+                            value={ruleForm[k] ?? ""}
+                            onChange={(e) => setRuleForm({ ...ruleForm, [k]: e.target.value })}
+                            className="mt-1 w-full rounded-xl border p-2 text-sm"
+                          />
+                        </label>
+                      ))}
+                      <label className="flex items-center gap-2 self-end text-[11px] text-slate-600">
+                        <input
+                          type="checkbox"
+                          checked={Boolean(ruleForm.compound)}
+                          onChange={(e) => setRuleForm({ ...ruleForm, compound: e.target.checked })}
+                        />
+                        سود مرکب فعال
+                      </label>
+                      <button
+                        onClick={saveRules}
+                        disabled={busy === "ledger-set_rules"}
+                        className="col-span-2 rounded-xl bg-violet-600 py-2 text-xs font-black text-white disabled:opacity-40"
+                      >
+                        💾 ذخیره قواعد پاداش
+                      </button>
+                    </div>
+                  )}
+                  <p className="mt-3 rounded-xl bg-slate-50 p-2 text-[10px] text-slate-500">
+                    مجموع پاداش پرداخت‌شده: {fa(ledgerData?.summary?.rewards?.paidUsdt ?? 0)} USDT •{" "}
+                    {fa(ledgerData?.summary?.rewards?.points ?? 0)} امتیاز •{" "}
+                    {fa(ledgerData?.summary?.rewards?.count ?? 0)} رویداد
+                  </p>
+                </div>
+              </div>
+
+              {/* ردیف‌های دفتر + پاداش‌ها */}
+              <div className="grid gap-4 lg:grid-cols-2">
+                <div className="overflow-hidden rounded-3xl border bg-white">
+                  <div className="border-b px-4 py-3 text-sm font-black">📒 آخرین ردیف‌های دفتر کل</div>
+                  <div className="max-h-[380px] overflow-y-auto">
+                    <table className="w-full text-right text-[10px]">
+                      <thead className="bg-slate-50 text-[9px] text-slate-500">
+                        <tr>
+                          <th className="px-3 py-2">شرح</th>
+                          <th className="px-3 py-2">حساب</th>
+                          <th className="px-3 py-2">مبلغ</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {(ledgerData?.summary?.recent || []).map((e: any) => {
+                          const net = Number(e.debitUsdt || 0) - Number(e.creditUsdt || 0);
+                          return (
+                            <tr key={e.id} className="border-b last:border-0">
+                              <td className="px-3 py-2">
+                                <b>{e.memo || e.kind}</b>
+                                <p className="text-[9px] text-slate-400">
+                                  {e.agentName || "—"} • {dt(e.createdAt)}
+                                </p>
+                              </td>
+                              <td className="px-3 py-2 font-mono text-[9px]" dir="ltr">{e.accountCode}</td>
+                              <td className={`px-3 py-2 font-black ${net < 0 ? "text-red-500" : "text-emerald-600"}`}>
+                                {fa(net)}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                        {!ledgerData?.summary?.recent?.length && (
+                          <tr>
+                            <td colSpan={3} className="px-3 py-8 text-center text-[11px] text-slate-400">
+                              دفتر خالی است. با ثبت سرمایهٔ اولیه شروع کنید.
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                <div className="overflow-hidden rounded-3xl border bg-white">
+                  <div className="border-b px-4 py-3 text-sm font-black">🏅 پاداش‌های اخیر کارمندان</div>
+                  <div className="max-h-[380px] overflow-y-auto">
+                    <table className="w-full text-right text-[10px]">
+                      <thead className="bg-slate-50 text-[9px] text-slate-500">
+                        <tr>
+                          <th className="px-3 py-2">کارمند</th>
+                          <th className="px-3 py-2">سود</th>
+                          <th className="px-3 py-2">پاداش</th>
+                          <th className="px-3 py-2">امتیاز</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {(ledgerData?.rewards || []).map((r: any) => (
+                          <tr key={r.id} className="border-b last:border-0">
+                            <td className="px-3 py-2">
+                              <b>{r.agentName}</b>
+                              <p className="text-[9px] text-slate-400">{dt(r.createdAt)} • {r.compounded ? "مرکب" : "ثبت‌شده"}</p>
+                            </td>
+                            <td className="px-3 py-2">{fa(r.tradeProfitUsdt)}</td>
+                            <td className="px-3 py-2 font-black text-emerald-600">{fa(r.rewardUsdt)}</td>
+                            <td className="px-3 py-2">{fa(r.points)}</td>
+                          </tr>
+                        ))}
+                        {!ledgerData?.rewards?.length && (
+                          <tr>
+                            <td colSpan={4} className="px-3 py-8 text-center text-[11px] text-slate-400">
+                              هنوز پاداشی پرداخت نشده است؛ اولین معاملهٔ سودده آریا این جدول را پر می‌کند.
+                            </td>
+                          </tr>
+                        )}
                       </tbody>
                     </table>
                   </div>
