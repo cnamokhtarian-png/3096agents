@@ -2046,6 +2046,48 @@ export default function Control() {
                   </div>
                 </div>
 
+                {ledgerData?.gate?.check?.notes?.length > 0 && (
+                  <div className="mt-3 rounded-2xl border border-sky-200 bg-sky-50 p-3">
+                    <p className="text-[11px] font-black text-sky-900">ℹ️ نکته‌های این محیط:</p>
+                    <ul className="mt-1 space-y-1">
+                      {ledgerData.gate.check.notes.map((n: string, i: number) => (
+                        <li key={i} className="text-[10px] leading-5 text-sky-800">• {n}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {/* 🧪 راهنمای چرخهٔ آزمایشی روی Testnet (مسیر تأییدشدهٔ مدیرعامل) */}
+                <div className="mt-3 rounded-2xl border bg-slate-50 p-3">
+                  <p className="text-[11px] font-black text-slate-800">🧪 چرخهٔ آزمایشی بدون پول واقعی (قبل از Mainnet)</p>
+                  <ol className="mt-2 space-y-1.5 text-[10px] leading-5 text-slate-600">
+                    <li>
+                      <b>۱.</b> کلیدهای <span dir="ltr">testnet.binance.vision</span> را در تب «کارمندان و دفاتر →
+                      صرافی» ذخیره کنید و «Testnet» را روشن بگذارید.
+                    </li>
+                    <li>
+                      <b>۲.</b> در همین تب، موجودی تست‌نت را با گزینهٔ «موجودی از قبل داخل صرافی» ثبت کنید (سرمایهٔ
+                      آزمایشی؛ هیچ پول واقعی جابه‌جا نمی‌شود).
+                    </li>
+                    <li>
+                      <b>۳.</b> «🔍 تست بی‌خطر کلید و قیمت» را بزنید؛ باید بدون خطا برگردد.
+                    </li>
+                    <li>
+                      <b>۴.</b> یک کارت معامله از آریا بسازید و با [✅] تأیید کنید؛ سپس در همین تب ببینید که سود/زیان و
+                      پاداش در دفتر ثبت شده‌اند.
+                    </li>
+                    <li>
+                      <b>۵.</b> بعد از موفقیت این چرخه، برای Mainnet: کلید واقعی + <span dir="ltr">EXCHANGE_TESTNET=false</span> و
+                      در پایان <span dir="ltr">AGENT_TRADING_ENABLED=true</span> — با همان سقف‌های خرد.
+                    </li>
+                  </ol>
+                  <p className="mt-2 rounded-xl bg-amber-50 p-2 text-[10px] text-amber-800">
+                    ⚠️ امروز قفل ارسال سفارش (<span dir="ltr">AGENT_TRADING_ENABLED</span>) بسته است؛ ثبت دفتری سرمایه و
+                    تست کلید انجام می‌شود، اما هیچ سفارشی — حتی در Testnet — ارسال نمی‌شود. برای تمرین، این فلگ هم باید
+                    موقتاً روشن باشد و پس از تمرین دوباره خاموش شود.
+                  </p>
+                </div>
+
                 {ledgerData?.gate?.check?.blockers?.length > 0 && (
                   <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 p-3">
                     <p className="text-[11px] font-black text-amber-900">🔒 الان قفل است — دلیل دقیق:</p>

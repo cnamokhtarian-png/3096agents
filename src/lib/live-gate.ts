@@ -1,7 +1,6 @@
 import { db } from "@/db";
 import { exchangeOrders, settings, systemEvents } from "@/db/schema";
 import { gte, sql } from "drizzle-orm";
-import { conf } from "@/lib/config";
 import { fetchPublicPrices, resolveExchangeConfig } from "@/lib/exchange";
 import { getWorkingCapital } from "@/lib/ledger";
 
@@ -197,6 +196,8 @@ export type LiveGateCheck = {
   /** مبلغ مجاز این سفارش بعد از اعمال همهٔ سقف‌ها */
   allowedOrderUsdt: number | null;
   message: string;
+  /** یادداشت‌های آگاهی‌بخش (قفل نیستند) — مثلاً نبود Testnet روی صرافی فعلی */
+  notes: string[];
 };
 
 /**
@@ -296,11 +297,37 @@ export async function checkLiveGate(intendedUsdt?: number): Promise<LiveGateChec
           : "live"
         : "live";
 
+  // ── یادداشت‌های آگاهی‌بخش (نه قفل) ─────────────────────────────────
+  const notes: string[] = [];
+  if (cfg.exchangeName === "tabdeal") {
+    notes.push(
+      "صرافی ذخیره‌شده Tabdeal است و Testnet ندارد؛ برای تمرین بدون پول واقعی، ابتدا کلیدهای Testnet بایننس را در تب صرافی ذخیره کنید.",
+    );
+  } else if (!cfg.testnet) {
+    notes.push(
+      "در حال حاضر Mainnet فعال است. برای یک چرخهٔ آزمایشی بدون پول واقعی، EXCHANGE_TESTNET را موقتاً true کنید.",
+    );
+  }
+  if (workingCapital > 0 && gate.maxOrderUsdt > workingCapital) {
+    notes.push(
+      `سقف سفارش (${gate.maxOrderUsdt} USDT) از سرمایهٔ کاری (${workingCapital} USDT) بیشتر است؛ عملاً اندازهٔ سفارش به موجودی واقعی محدود می‌شود.`,
+    );
+  }
+
   const message = blockers.length
     ? blockers.map((b) => b.label).join(" • ")
     : `سفارش تا ${allowedOrderUsdt ?? 0} USDT مجاز است (${mode === "testnet" ? "Testnet" : "Mainnet"} • ${usage.orders}/${gate.maxOrdersPerDay} سفارش امروز).`;
 
-  return { allowed: blockers.length === 0, mode, blockers, config: gate, usage, allowedOrderUsdt, message };
+  return {
+    allowed: blockers.length === 0,
+    mode,
+    blockers,
+    config: gate,
+    usage,
+    allowedOrderUsdt,
+    message,
+    notes,
+  };
 }
 
 /**
@@ -314,13 +341,6 @@ export async function capOrderSize(riskSizedUsdt: number | null) {
   }
   const capped = Math.min(riskSizedUsdt, gate.maxOrderUsdt);
   return { usdt: capped, capped: capped < riskSizedUsdt, gate };
-}
-
-/** اجرای سفارش testnet به‌عنوان تمرین اجباری؟ (پیش‌فرض روشن است تا پروڈکشن Mainnet نباشد) */
-export function testnetFirst(strictEnv = "LIVE_TESTNET_SMOKE_REQUIRED") {
-  const raw = conf(strictEnv);
-  if (!raw) return true;
-  return ["true", "1", "yes", "on"].includes(raw.trim().toLowerCase());
 }
 
 // ─────────────────────────────────────────────────────────────────────────
