@@ -598,7 +598,7 @@ export default function Control() {
               <div className="flex flex-wrap justify-between items-center gap-3">
                 <div>
                   <h2 className="text-xl font-black">🏢 شرکت 3096 — اتاق مدیریت</h2>
-                  <p className="text-slate-300 text-sm mt-1">کارمندها هر ۱۵ دقیقه خودکار شیفت می‌روند — یا همین حالا دستی اجرا کنید.</p>
+                  <p className="text-slate-300 text-sm mt-1">کارمندها هر روز صبح خودکار شیفت می‌روند — یا همین حالا دستی اجرا کنید.</p>
                 </div>
                 <button
                   onClick={() => runShift()}
