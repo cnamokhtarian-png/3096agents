@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db";
 import { messages, tasks, agentLogs } from "@/db/schema";
 import { ensureSeed, getMasterWallet } from "@/lib/seed";
+import { eq } from "drizzle-orm";
 
 async function sendRealTelegramMessage(
   chatId: string | number,
@@ -45,6 +46,20 @@ export async function POST(req: NextRequest) {
   if (b.callback_query) {
     const data = b.callback_query.data || "";
     const [action, id] = data.split(":");
+    const taskId = Number(id);
+    // Human-in-the-loop: تأیید/رد واقعی — وضعیت تسک در دیتابیس عوض می‌شود
+    const newStatus =
+      action === "approve"
+        ? "approved"
+        : action === "reject"
+        ? "rejected"
+        : null;
+    if (newStatus && taskId > 0) {
+      await db
+        .update(tasks)
+        .set({ status: newStatus })
+        .where(eq(tasks.id, taskId));
+    }
     await db.insert(agentLogs).values({
       agent: "Webhook تلگرام",
       action: data.startsWith("approve")
@@ -59,6 +74,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       ok: true,
       method: "answerCallbackQuery",
+      callback_query_id: b.callback_query.id || "",
       text: action === "approve" ? "تأیید شد ✅" : "رد شد ❌",
       inline_keyboard: [
         [
