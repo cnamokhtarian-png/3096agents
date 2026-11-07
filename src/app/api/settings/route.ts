@@ -11,6 +11,7 @@ const FIELDS = [
   { key: "exchange_api_secret", label: "رمز API صرافی", secret: true },
   { key: "ai_provider", label: "ارائه‌دهنده AI", secret: false },
   { key: "ai_api_key", label: "کلید AI", secret: true },
+  { key: "ai_model", label: "مدل AI", secret: false },
   { key: "risk_max_trade_pct", label: "سقف ریسک هر معامله (٪)", secret: false },
   { key: "risk_max_leverage", label: "سقف اهرم", secret: false },
   { key: "risk_require_sl", label: "حد ضرر اجباری", secret: false },

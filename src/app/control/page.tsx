@@ -1092,6 +1092,10 @@ export default function Control() {
                 <input type="password" value={fieldVals["ai_api_key"] || ""} onChange={(e) => setFieldVals((p) => ({ ...p, ai_api_key: e.target.value }))} placeholder={(setup?.fields || []).find((f: any) => f.key === "ai_api_key")?.masked || "کلید AI"} className="border rounded-xl p-2.5 text-sm font-mono md:col-span-2" dir="ltr" />
               </div>
               <div className="flex gap-2 mt-2">
+                <input value={fieldVals["ai_model"] || ""} onChange={(e) => setFieldVals((p) => ({ ...p, ai_model: e.target.value }))} placeholder="مدل (gemini-2.5-flash)" className="border rounded-xl p-2 text-sm font-mono flex-1" dir="ltr" />
+                <button onClick={() => saveField("ai_model")} className="border px-4 py-2 rounded-xl font-bold text-sm">ذخیره مدل</button>
+              </div>
+              <div className="flex gap-2 mt-2">
                 <button onClick={() => saveField("ai_provider")} className="bg-slate-900 text-white px-4 py-2 rounded-xl font-bold text-sm">ذخیره ارائه‌دهنده</button>
                 <button onClick={() => saveField("ai_api_key")} className="border px-4 py-2 rounded-xl font-bold text-sm">ذخیره کلید</button>
               </div>

@@ -206,7 +206,7 @@ CREATE TABLE agentos.settings (
 );
 -- کلیدها: bot_username, bot_status, master_wallet_address, master_wallet_network,
 -- auto_sweep_enabled(false), wallet, webhook, exchange_name, exchange_api_key,
--- exchange_api_secret, ai_provider, ai_api_key, risk_max_trade_pct,
+-- exchange_api_secret, ai_provider, ai_api_key, ai_model,
 -- risk_max_leverage, risk_require_sl
 ```
 
