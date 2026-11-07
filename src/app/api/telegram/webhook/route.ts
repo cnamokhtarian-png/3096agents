@@ -21,7 +21,12 @@ import {
 } from "@/lib/telegram";
 import { ENV, ConfigError } from "@/lib/env";
 import { guardAdmin } from "@/lib/auth";
-import { approveJob, getJob, rejectJob, syncTelegramApproval } from "@/lib/jobs";
+import {
+  approveJob,
+  getJob,
+  rejectJob,
+  syncTelegramApproval,
+} from "@/lib/jobs";
 import { generateAgentReport } from "@/lib/report";
 import { conf } from "@/lib/config";
 
@@ -78,7 +83,11 @@ async function logActivity(input: {
 
 /** دستورهای متنی مدیرعامل در تلگرام. */
 async function handleAdminCommand(text: string, chatId: string | number) {
-  const cmd = text.trim().split(/\s+/)[0].toLowerCase().replace(`@${conf("TELEGRAM_BOT_USERNAME")}`, "");
+  const cmd = text
+    .trim()
+    .split(/\s+/)[0]
+    .toLowerCase()
+    .replace(`@${conf("TELEGRAM_BOT_USERNAME")}`, "");
 
   if (cmd === "/start" || cmd === "/help") {
     await sendTelegramMessage(
@@ -92,13 +101,16 @@ async function handleAdminCommand(text: string, chatId: string | number) {
         "• /id — نمایش چت‌آیدی شما",
         "• /webhook — وضعیت وبهوک",
         "تأیید کارها با دکمه‌های شیشه‌ای همان پیام انجام می‌شود.",
-      ].join("\n")
+      ].join("\n"),
     );
     return true;
   }
 
   if (cmd === "/id") {
-    await sendTelegramMessage(chatId, `CHAT_ID: <code>${escapeHtml(String(chatId))}</code>`);
+    await sendTelegramMessage(
+      chatId,
+      `CHAT_ID: <code>${escapeHtml(String(chatId))}</code>`,
+    );
     return true;
   }
 
@@ -115,38 +127,48 @@ async function handleAdminCommand(text: string, chatId: string | number) {
         ...list.map(
           (a) =>
             `${a.avatar} ${escapeHtml(a.name)} — ${Number(a.earnedUsdt).toLocaleString("fa-IR")} USDT` +
-            ` • موفق: ${a.successCount} • خطا: ${a.errorCount}`
+            ` • موفق: ${a.successCount} • خطا: ${a.errorCount}`,
         ),
-      ].join("\n")
+      ].join("\n"),
     );
     return true;
   }
 
   if (cmd === "/jobs") {
-    const rows = await db.select().from(agentJobs).orderBy(desc(agentJobs.createdAt)).limit(20);
+    const rows = await db
+      .select()
+      .from(agentJobs)
+      .orderBy(desc(agentJobs.createdAt))
+      .limit(20);
     const pending = rows.filter((j) => j.status === "awaiting_approval");
     await sendTelegramMessage(
       chatId,
       pending.length
         ? `<b>🗂 ${pending.length} کار منتظر تأیید</b>\n` +
             pending
-              .map((j) => `#${j.id} — ${escapeHtml(j.agentName)}: ${escapeHtml(j.title)}`)
+              .map(
+                (j) =>
+                  `#${j.id} — ${escapeHtml(j.agentName)}: ${escapeHtml(j.title)}`,
+              )
               .join("\n")
-        : "هیچ کاری منتظر تأیید نیست ✅"
+        : "هیچ کاری منتظر تأیید نیست ✅",
     );
     return true;
   }
 
   if (cmd === "/report") {
     const list = await db.select().from(agents);
-    await sendTelegramMessage(chatId, `⏳ در حال ساخت ${list.length} گزارش از داده واقعی...`);
+    await sendTelegramMessage(
+      chatId,
+      `⏳ در حال ساخت ${list.length} گزارش از داده واقعی...`,
+    );
     for (const a of list) {
       const rep = await generateAgentReport(a.id, { useAi: true });
       if (!rep.ok) continue;
       const lines = rep.text.split("\n");
       await sendTelegramMessage(
         chatId,
-        `<b>${escapeHtml(lines[0])}</b>\n${escapeHtml(lines.slice(1).join("\n"))}`
+        `<b>${escapeHtml(lines[0])}</b>\n${escapeHtml(lines.slice(1).join("\n"))}`,
       );
     }
     return true;
@@ -159,10 +181,13 @@ async function handleAdminCommand(text: string, chatId: string | number) {
         chatId,
         `<b>وضعیت وبهوک</b>\nURL: <code>${escapeHtml((info as any).result?.url || "—")}</code>\n` +
           `آپدیت‌های در انتظار: ${(info as any).result?.pending_update_count ?? 0}\n` +
-          `آخرین خطا: ${escapeHtml((info as any).result?.last_error_message || "ندارد")}`
+          `آخرین خطا: ${escapeHtml((info as any).result?.last_error_message || "ندارد")}`,
       );
     } else {
-      await sendTelegramMessage(chatId, `خطای Telegram: ${escapeHtml((info as any).description || "unknown")}`);
+      await sendTelegramMessage(
+        chatId,
+        `خطای Telegram: ${escapeHtml((info as any).description || "unknown")}`,
+      );
     }
     return true;
   }
@@ -180,7 +205,7 @@ export async function POST(req: NextRequest) {
         error: "TELEGRAM_BOT_TOKEN ست نشده است؛ وبهوک واقعی کار نمی‌کند.",
         code: "telegram_not_configured",
       },
-      { status: 503 }
+      { status: 503 },
     );
   }
 
@@ -195,7 +220,10 @@ export async function POST(req: NextRequest) {
         message: "درخواست وبهوک با سکرت نامعتبر رد شد",
       })
       .catch(() => {});
-    return NextResponse.json({ ok: false, error: "invalid secret token" }, { status: 403 });
+    return NextResponse.json(
+      { ok: false, error: "invalid secret token" },
+      { status: 403 },
+    );
   }
 
   const update = await req.json().catch(() => ({}));
@@ -225,11 +253,17 @@ export async function POST(req: NextRequest) {
       const jobId = Number(rawId);
       const chatId = cb.message?.chat?.id;
       const messageId = cb.message?.message_id;
-      const user = cb.from?.username ? `@${cb.from.username}` : `user:${cb.from?.id ?? "unknown"}`;
+      const user = cb.from?.username
+        ? `@${cb.from.username}`
+        : `user:${cb.from?.id ?? "unknown"}`;
       const allowed = isAdminChat(chatId) || !ENV.telegramAdminChat();
 
       if (!allowed) {
-        await answerCallbackQuery(cb.id, "⛔ فقط مدیرعامل اجازه تأیید دارد.", true);
+        await answerCallbackQuery(
+          cb.id,
+          "⛔ فقط مدیرعامل اجازه تأیید دارد.",
+          true,
+        );
         return NextResponse.json({ ok: true, denied: true });
       }
 
@@ -243,7 +277,7 @@ export async function POST(req: NextRequest) {
             chatId,
             messageId,
             `⛔ <b>اجرا ناموفق</b> #${jobId}\n<code>${escapeHtml(res.error || "خطای نامشخص")}</code>`,
-            { inline_keyboard: [] }
+            { inline_keyboard: [] },
           ).catch(() => {});
         }
         return NextResponse.json({ ok: true, action: "approve", result: res });
@@ -258,7 +292,7 @@ export async function POST(req: NextRequest) {
             chatId,
             messageId,
             `❌ درخواست #${jobId} توسط ${escapeHtml(user)} رد شد.\n${escapeHtml(job?.title || "")}`,
-            { inline_keyboard: [] }
+            { inline_keyboard: [] },
           ).catch(() => {});
         }
         return NextResponse.json({ ok: true, action: "reject", result: res });
@@ -269,8 +303,10 @@ export async function POST(req: NextRequest) {
         const base = conf("NEXT_PUBLIC_APP_URL");
         await answerCallbackQuery(
           cb.id,
-          base ? `پنل: ${base}/control/office/${job?.agentId ?? ""}` : `کار #${jobId} — ${job?.status || "?"}`,
-          true
+          base
+            ? `پنل: ${base}/control/office/${job?.agentId ?? ""}`
+            : `کار #${jobId} — ${job?.status || "?"}`,
+          true,
         );
         return NextResponse.json({ ok: true, action: "open", job });
       }
@@ -278,7 +314,10 @@ export async function POST(req: NextRequest) {
       if (code === "pz" && jobId) {
         const job = await getJob(jobId);
         if (job) {
-          await db.update(agents).set({ status: "paused" }).where(eq(agents.id, job.agentId ?? -1));
+          await db
+            .update(agents)
+            .set({ status: "paused" })
+            .where(eq(agents.id, job.agentId ?? -1));
           await logActivity({
             agentId: job.agentId,
             agentName: job.agentName,
@@ -303,11 +342,14 @@ export async function POST(req: NextRequest) {
     const chatId = msg.chat?.id;
     const text = String(msg.text || "").trim();
     const name =
-      [msg.from?.first_name, msg.from?.last_name].filter(Boolean).join(" ") || "کاربر تلگرام";
+      [msg.from?.first_name, msg.from?.last_name].filter(Boolean).join(" ") ||
+      "کاربر تلگرام";
     const username = msg.from?.username ? `@${msg.from.username}` : "";
 
     if (isAdminChat(chatId)) {
-      const handled = text.startsWith("/") ? await handleAdminCommand(text, chatId) : false;
+      const handled = text.startsWith("/")
+        ? await handleAdminCommand(text, chatId)
+        : false;
       await db.insert(agentActivityLogs).values({
         agentName: "مدیرعامل (تلگرام)",
         action: handled ? "دستور متنی اجرا شد" : "پیام مدیرعامل ثبت شد",
@@ -318,7 +360,7 @@ export async function POST(req: NextRequest) {
       if (!handled && text) {
         await sendTelegramMessage(
           chatId,
-          "پیام شما ثبت شد. برای دیدن دستورها /help را بزنید."
+          "پیام شما ثبت شد. برای دیدن دستورها /help را بزنید.",
         );
       }
       return NextResponse.json({ ok: true, admin: true, handled });
@@ -371,22 +413,30 @@ export async function POST(req: NextRequest) {
           inline_keyboard: [
             [{ text: "📊 مشاهده در پنل", callback_data: `op:${task.id}` }],
           ],
-        }
+        },
       );
     }
 
     // پاسخ خودکار فقط «دریافت شد» است؛ محتوای تجاری بدون تأیید ارسال نمی‌شود.
     await sendTelegramMessage(
       chatId,
-      "پیام شما دریافت شد ✅ کارشناس ما به‌زودی پاسخ می‌دهد."
+      "پیام شما دریافت شد ✅ کارشناس ما به‌زودی پاسخ می‌دهد.",
     );
 
     return NextResponse.json({ ok: true, message: saved, task });
   } catch (e: any) {
-    const detail = e instanceof ConfigError ? `${e.message} (${e.missing.join(", ")})` : e?.message || String(e);
+    const detail =
+      e instanceof ConfigError
+        ? `${e.message} (${e.missing.join(", ")})`
+        : e?.message || String(e);
     await db
       .insert(systemEvents)
-      .values({ level: "error", scope: "telegram:webhook", message: detail, meta: { updateId } })
+      .values({
+        level: "error",
+        scope: "telegram:webhook",
+        message: detail,
+        meta: { updateId },
+      })
       .catch(() => {});
     return NextResponse.json({ ok: false, error: detail }, { status: 500 });
   }
@@ -402,7 +452,10 @@ export async function GET(req: NextRequest) {
     mode: telegramConfigured() ? "live_telegram_api" : "not_configured",
     adminChatConfigured: Boolean(ENV.telegramAdminChat()),
     secretConfigured: Boolean(ENV.telegramSecret()),
-    webhook: info && info.ok ? (info as any).result : (info as any)?.description ?? null,
+    webhook:
+      info && info.ok
+        ? (info as any).result
+        : ((info as any)?.description ?? null),
     callbacks: ["ap:<jobId>", "rj:<jobId>", "op:<jobId>", "pz:<jobId>"],
   });
 }

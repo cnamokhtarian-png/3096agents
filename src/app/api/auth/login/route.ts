@@ -26,7 +26,7 @@ export async function POST(req: NextRequest) {
         error: "AUTH_SECRET روی سرور ست نشده است؛ ورود امن غیرفعال است.",
         code: "auth_secret_missing",
       },
-      { status: 503 }
+      { status: 503 },
     );
   }
 
@@ -36,8 +36,11 @@ export async function POST(req: NextRequest) {
     "unknown";
   if (rateLimited(ip)) {
     return NextResponse.json(
-      { error: "تلاش‌های ناموفق زیاد؛ ۱۰ دقیقه بعد دوباره امتحان کنید.", code: "rate_limited" },
-      { status: 429 }
+      {
+        error: "تلاش‌های ناموفق زیاد؛ ۱۰ دقیقه بعد دوباره امتحان کنید.",
+        code: "rate_limited",
+      },
+      { status: 429 },
     );
   }
 
@@ -48,16 +51,18 @@ export async function POST(req: NextRequest) {
   } catch {
     return NextResponse.json(
       { error: "درخواست نامعتبر است.", code: "bad_request" },
-      { status: 400 }
+      { status: 400 },
     );
   }
 
-  const email = String(body?.email || "").trim().toLowerCase();
+  const email = String(body?.email || "")
+    .trim()
+    .toLowerCase();
   const password = String(body?.password || "");
   if (!email || !password) {
     return NextResponse.json(
       { error: "ایمیل و رمز عبور را وارد کنید.", code: "missing_fields" },
-      { status: 400 }
+      { status: 400 },
     );
   }
 
@@ -69,7 +74,7 @@ export async function POST(req: NextRequest) {
     if (!u || u.passwordHash !== hashPw(password)) {
       return NextResponse.json(
         { error: "ایمیل یا رمز عبور اشتباه است", code: "invalid_credentials" },
-        { status: 401 }
+        { status: 401 },
       );
     }
 
@@ -99,7 +104,7 @@ export async function POST(req: NextRequest) {
         code: "database_unavailable",
         detail: process.env.NODE_ENV === "production" ? undefined : detail,
       },
-      { status: 503 }
+      { status: 503 },
     );
   }
 }

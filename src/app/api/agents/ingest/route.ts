@@ -46,7 +46,8 @@ export async function GET() {
     exampleBody: {
       slug: "custom-webhook-worker",
       amountUsdt: 55.25,
-      txHash: "0x9f41c0d2b7a8e6f5d4c3b2a1908f7e6d5c4b3a2910f8e7d6c5b4a39281706f5e",
+      txHash:
+        "0x9f41c0d2b7a8e6f5d4c3b2a1908f7e6d5c4b3a2910f8e7d6c5b4a39281706f5e",
       network: "BEP20",
       title: "سود واقعی آربیتراژ TON/USDT",
     },
@@ -64,7 +65,7 @@ export async function POST(req: NextRequest) {
   if (!headerKey) {
     return NextResponse.json(
       { ok: false, error: "هدر x-agent-key لازم است (Unauthorized)" },
-      { status: 401 }
+      { status: 401 },
     );
   }
 
@@ -73,14 +74,19 @@ export async function POST(req: NextRequest) {
 
   let targetAgent: (typeof allAgents)[number] | undefined;
   if (headerKey === masterKey && masterKey) {
-    if (b.agentId) targetAgent = allAgents.find((a) => a.id === Number(b.agentId));
-    else if (b.slug) targetAgent = allAgents.find((a) => a.slug === String(b.slug));
+    if (b.agentId)
+      targetAgent = allAgents.find((a) => a.id === Number(b.agentId));
+    else if (b.slug)
+      targetAgent = allAgents.find((a) => a.slug === String(b.slug));
   } else {
     targetAgent = allAgents.find((a) => a.apiKey === headerKey);
   }
 
   if (!targetAgent) {
-    return NextResponse.json({ ok: false, error: "کلید API نامعتبر است (Unauthorized)" }, { status: 401 });
+    return NextResponse.json(
+      { ok: false, error: "کلید API نامعتبر است (Unauthorized)" },
+      { status: 401 },
+    );
   }
 
   const amountUsdt = Number(b.amountUsdt);
@@ -88,16 +94,26 @@ export async function POST(req: NextRequest) {
   const title = String(b.title || "").trim();
 
   if (!Number.isFinite(amountUsdt) || amountUsdt <= 0) {
-    return NextResponse.json({ ok: false, error: "amountUsdt باید عددی بزرگ‌تر از صفر باشد" }, { status: 422 });
+    return NextResponse.json(
+      { ok: false, error: "amountUsdt باید عددی بزرگ‌تر از صفر باشد" },
+      { status: 422 },
+    );
   }
   if (!txHash || txHash.length < 16) {
     return NextResponse.json(
-      { ok: false, error: "هش تراکنش معتبر (txHash) الزامی است — بدون شاهد، درآمد ثبت نمی‌شود" },
-      { status: 422 }
+      {
+        ok: false,
+        error:
+          "هش تراکنش معتبر (txHash) الزامی است — بدون شاهد، درآمد ثبت نمی‌شود",
+      },
+      { status: 422 },
     );
   }
   if (!title) {
-    return NextResponse.json({ ok: false, error: "title الزامی است" }, { status: 422 });
+    return NextResponse.json(
+      { ok: false, error: "title الزامی است" },
+      { status: 422 },
+    );
   }
 
   const wallet = await getMasterWallet();
@@ -106,7 +122,9 @@ export async function POST(req: NextRequest) {
   const duplicate = await db
     .select()
     .from(transactions)
-    .where(and(eq(transactions.txHash, txHash), eq(transactions.kind, "income")))
+    .where(
+      and(eq(transactions.txHash, txHash), eq(transactions.kind, "income")),
+    )
     .limit(1);
   if (duplicate[0]) {
     return NextResponse.json({
@@ -183,7 +201,7 @@ export async function POST(req: NextRequest) {
     });
     return NextResponse.json(
       { ok: false, error: e?.message || "خطا در ثبت درآمد" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

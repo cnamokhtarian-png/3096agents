@@ -16,7 +16,10 @@ export const dynamic = "force-dynamic";
  * همه‌ی دستورها واقعی هستند: یا کار در صف تأیید می‌گذارند، یا داده‌ی
  * واقعی صرافی/بازار را می‌خوانند. هیچ پاداشی اینجا ساخته نمی‌شود.
  */
-export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
+export async function POST(
+  req: NextRequest,
+  ctx: { params: Promise<{ id: string }> },
+) {
   const denied = guardAdmin(req);
   if (denied) return denied;
 
@@ -26,9 +29,14 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
   const action = String(body?.action || "");
   const actor = actorOf(req);
 
-  const rows = await db.select().from(agents).where(eq(agents.id, agentId)).limit(1);
+  const rows = await db
+    .select()
+    .from(agents)
+    .where(eq(agents.id, agentId))
+    .limit(1);
   const agent = rows[0];
-  if (!agent) return NextResponse.json({ error: "کارمند پیدا نشد" }, { status: 404 });
+  if (!agent)
+    return NextResponse.json({ error: "کارمند پیدا نشد" }, { status: 404 });
 
   switch (action) {
     // ── ۱) اسکن واقعی بازار + موجودی صرافی ──────────────────────────────
@@ -59,7 +67,11 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
           accountError ? ` • خطای حساب: ${accountError}` : ""
         }`,
         source: "panel",
-        meta: { actor, durationMs: Date.now() - started, prices: market.ok ? market.quotes : null },
+        meta: {
+          actor,
+          durationMs: Date.now() - started,
+          prices: market.ok ? market.quotes : null,
+        },
       });
       if (!market.ok) {
         await recordAgentError({
@@ -69,7 +81,10 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
           source: "panel",
         });
       }
-      await db.update(agents).set({ currentFocus: "اسکن بازار", lastActiveAt: new Date() }).where(eq(agents.id, agent.id));
+      await db
+        .update(agents)
+        .set({ currentFocus: "اسکن بازار", lastActiveAt: new Date() })
+        .where(eq(agents.id, agent.id));
 
       return NextResponse.json({
         ok: market.ok,
@@ -85,13 +100,14 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     // ── ۲) درخواست معامله واقعی (نیازمند تأیید مدیرعامل) ────────────────
     case "request_trade": {
       const symbol = String(body?.symbol || "BTCUSDT").toUpperCase();
-      const side = String(body?.side || "BUY").toUpperCase() === "SELL" ? "SELL" : "BUY";
+      const side =
+        String(body?.side || "BUY").toUpperCase() === "SELL" ? "SELL" : "BUY";
       const quoteOrderQty = Number(body?.quoteOrderQty || 0);
       const quantity = Number(body?.quantity || 0);
       if (!quoteOrderQty && !quantity) {
         return NextResponse.json(
           { error: "مقدار سفارش (quoteOrderQty یا quantity) لازم است" },
-          { status: 400 }
+          { status: 400 },
         );
       }
 
@@ -123,8 +139,9 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
         agentId: agent.id,
         agentName: agent.name,
         kind: "tool_run",
-        title: `اجرای ابزار «${body?.tool || "ابزار" }»`,
-        detail: "این کار به ورکر واقعی (AGENT_WORKER_URL) ارسال می‌شود و خروجی واقعی ثبت می‌گردد.",
+        title: `اجرای ابزار «${body?.tool || "ابزار"}»`,
+        detail:
+          "این کار به ورکر واقعی (AGENT_WORKER_URL) ارسال می‌شود و خروجی واقعی ثبت می‌گردد.",
         payload: { tool: body?.tool, input: body?.input },
         risk: "low",
         requiresApproval: false,
@@ -174,9 +191,15 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
       return NextResponse.json(
         {
           error: "دستور نامعتبر است",
-          allowed: ["market_scan", "request_trade", "tool_run", "toggle", "set_focus"],
+          allowed: [
+            "market_scan",
+            "request_trade",
+            "tool_run",
+            "toggle",
+            "set_focus",
+          ],
         },
-        { status: 400 }
+        { status: 400 },
       );
   }
 }

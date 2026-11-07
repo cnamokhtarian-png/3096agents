@@ -9,7 +9,9 @@ function errDetail(e: unknown): string {
     const anyE = e as Error & { cause?: unknown; code?: unknown };
     const code = anyE.code !== undefined ? ` [code=${String(anyE.code)}]` : "";
     const cause =
-      anyE.cause !== undefined && anyE.cause !== null ? " | cause: " + errDetail(anyE.cause) : "";
+      anyE.cause !== undefined && anyE.cause !== null
+        ? " | cause: " + errDetail(anyE.cause)
+        : "";
     return `${e.message}${code}${cause}`;
   }
   return String(e);
@@ -34,7 +36,13 @@ export async function GET() {
       SELECT table_name FROM information_schema.tables WHERE table_schema = 'agentos'
     `);
     const tables: string[] = (t?.rows ?? []).map((r: any) => r.table_name);
-    const required = ["agents", "transactions", "agent_activity_logs", "agent_jobs", "system_events"];
+    const required = [
+      "agents",
+      "transactions",
+      "agent_activity_logs",
+      "agent_jobs",
+      "system_events",
+    ];
     const missing = required.filter((x) => !tables.includes(x));
     return Response.json({
       ok: missing.length === 0,
@@ -47,6 +55,9 @@ export async function GET() {
         : undefined,
     });
   } catch (e) {
-    return Response.json({ ok: false, db: dbTarget(), error: errDetail(e) }, { status: 500 });
+    return Response.json(
+      { ok: false, db: dbTarget(), error: errDetail(e) },
+      { status: 500 },
+    );
   }
 }
