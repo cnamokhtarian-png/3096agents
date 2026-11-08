@@ -242,8 +242,6 @@ async function handleAdminCommand(text: string, chatId: string | number) {
 }
 
 export async function POST(req: NextRequest) {
-  await ensureSeed();
-
   if (!telegramConfigured()) {
     return NextResponse.json(
       {
@@ -273,6 +271,18 @@ export async function POST(req: NextRequest) {
   }
 
   const update = await req.json().catch(() => ({}));
+  // Acknowledge callbacks once, immediately after webhook authentication and
+  // chat authorization, before seeding or database deduplication. This is a
+  // receipt only, not confirmation that the action has succeeded.
+  if (update.callback_query) {
+    const cb = update.callback_query;
+    const allowed = isAdminChat(cb.message?.chat?.id) || !ENV.telegramAdminChat();
+    if (typeof cb.id === "string" && cb.id) {
+      await answerCallbackQuery(cb.id, allowed ? "⏳ درخواست دریافت شد؛ در حال بررسی..." : "⛔ فقط مدیرعامل اجازه تأیید دارد.", !allowed);
+    }
+    if (!allowed) return NextResponse.json({ ok: true, denied: true });
+  }
+  await ensureSeed();
   const updateId = Number(update?.update_id);
   if (Number.isFinite(updateId)) {
     const ins = await db
@@ -302,19 +312,7 @@ export async function POST(req: NextRequest) {
       const user = cb.from?.username
         ? `@${cb.from.username}`
         : `user:${cb.from?.id ?? "unknown"}`;
-      const allowed = isAdminChat(chatId) || !ENV.telegramAdminChat();
-
-      if (!allowed) {
-        await answerCallbackQuery(
-          cb.id,
-          "⛔ فقط مدیرعامل اجازه تأیید دارد.",
-          true,
-        );
-        return NextResponse.json({ ok: true, denied: true });
-      }
-
       if (code === "ap" && jobId) {
-        await answerCallbackQuery(cb.id, "⏳ در حال اجرا...");
         const res = await approveJob(jobId, `telegram:${user}`);
         const job = await getJob(jobId);
         await touchAgent(job?.agentName || "");
@@ -330,7 +328,6 @@ export async function POST(req: NextRequest) {
       }
 
       if (code === "rj" && jobId) {
-        await answerCallbackQuery(cb.id, "❌ رد شد");
         const res = await rejectJob(jobId, `telegram:${user}`);
         const job = await getJob(jobId);
         if (chatId && messageId) {
@@ -347,12 +344,9 @@ export async function POST(req: NextRequest) {
       if (code === "op" && jobId) {
         const job = await getJob(jobId);
         const base = conf("NEXT_PUBLIC_APP_URL");
-        await answerCallbackQuery(
-          cb.id,
-          base
-            ? `پنل: ${base}/control/office/${job?.agentId ?? ""}`
-            : `کار #${jobId} — ${job?.status || "?"}`,
-          true,
+        if (chatId) await sendTelegramMessage(
+          chatId,
+          escapeHtml(base ? `پنل: ${base}/control/office/${job?.agentId ?? ""}` : `کار #${jobId} — ${job?.status || "?"}`),
         );
         return NextResponse.json({ ok: true, action: "open", job });
       }
@@ -373,11 +367,11 @@ export async function POST(req: NextRequest) {
             jobId: job.id,
           });
         }
-        await answerCallbackQuery(cb.id, "⏸ کارمند متوقف شد");
+        if (chatId) await sendTelegramMessage(chatId, job ? "⏸ کارمند متوقف شد" : "کار پیدا نشد.");
         return NextResponse.json({ ok: true, action: "pause", job });
       }
 
-      await answerCallbackQuery(cb.id, "دستور ناشناخته");
+      if (chatId) await sendTelegramMessage(chatId, "دستور ناشناخته است.");
       return NextResponse.json({ ok: true, action: "unknown", data });
     }
 

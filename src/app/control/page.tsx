@@ -1,5 +1,7 @@
 "use client";
 
+import ExchangeDetails from "@/components/ExchangeDetails";
+
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import OfficeCard from "@/components/OfficeCard";
@@ -117,6 +119,7 @@ export default function Control() {
   const [exInfo, setExInfo] = useState<any>(null);
   const [exForm, setExForm] = useState({ apiKey: "", apiSecret: "", testnet: true });
   const [exTest, setExTest] = useState<any>(null);
+  const [exchangeTestedAt, setExchangeTestedAt] = useState<string | null>(null);
 
   const [newAgent, setNewAgent] = useState({
     name: "",
@@ -469,7 +472,8 @@ export default function Control() {
     try {
       const d = await api("/api/exchange", "POST", {});
       setExTest(d);
-      notify(d.ok ? "اتصال واقعی صرافی تأیید شد ✅" : `⚠️ اتصال ناقص: ${d.test?.accountError || d.test?.priceError || ""}`);
+      setExchangeTestedAt(new Date().toISOString());
+      notify(d.test?.account ? "استعلام حساب صرافی انجام شد ✅" : `⚠️ حساب صرافی بررسی نشد: ${d.test?.accountError || "کلیدها را بررسی کنید"}`);
       await load();
     } catch (err: any) {
       setExTest({ error: err.message });
@@ -976,8 +980,8 @@ export default function Control() {
                     <div className="rounded-xl bg-slate-50 p-2">
                       <p className="text-slate-500">موجودی صرافی</p>
                       <b className="text-slate-700">
-                        {walletInfo?.exchange?.balance?.[0]?.total !== undefined
-                          ? fa(walletInfo.exchange.balance[0].total)
+                        {walletInfo?.exchange?.balance?.find((b: any) => b.asset === "USDT")?.total !== undefined
+                          ? fa(walletInfo.exchange.balance.find((b: any) => b.asset === "USDT").total)
                           : "—"}
                       </b>
                     </div>
@@ -996,13 +1000,14 @@ export default function Control() {
                       }`}
                     >
                       {exInfo?.status?.canExecuteOrders
-                        ? `آماده ارسال سفارش واقعی (${exInfo?.status?.network})`
+                        ? `تنظیمات ارسال سفارش فعال است (${exInfo?.status?.network})`
                         : "ارسال سفارش قفل است"}
                     </span>
                   </div>
                   <p className="mt-1 text-[11px] leading-5 text-slate-600">
                     {exInfo?.status?.message || "وضعیت صرافی در حال خواندن است…"}
                   </p>
+                  <p className="mt-1 text-xs font-bold text-slate-700">صرافی انتخاب‌شده: {exInfo?.status?.exchange || "نامشخص"}</p>
 
                   {/* چراغ‌های وضعیت */}
                   <div className="mt-3 grid grid-cols-2 gap-2 text-[10px]">
@@ -1088,20 +1093,8 @@ export default function Control() {
                     </div>
                   </form>
 
-                  {exTest && !exTest.loading && (
-                    <pre className="mt-2 max-h-32 overflow-auto rounded-xl bg-white p-2 text-[9px] text-slate-600" dir="ltr">
-                      {JSON.stringify(
-                        {
-                          price: exTest.test?.prices?.[0]?.price ?? null,
-                          priceError: exTest.test?.priceError,
-                          balances: exTest.test?.account?.balances ?? null,
-                          accountError: exTest.test?.accountError,
-                        },
-                        null,
-                        1
-                      )}
-                    </pre>
-                  )}
+                  <ExchangeDetails test={exTest?.test} testedAt={exchangeTestedAt} wallet={walletInfo?.masterWallet} />
+                  {exTest?.error && <p role="alert" className="mt-2 text-xs text-red-700">خطای تست: {exTest.error}</p>}
                   <p className="mt-2 text-[9px] leading-4 text-slate-500">
                     قفل HITL: حتی با باز بودن این کلید، هیچ سفارشی بدون تأیید شما در پنل یا تلگرام ارسال نمی‌شود.
                     کلیدها فقط در دیتابیس همین پروژه ذخیره می‌شوند و در گیت نوشته نمی‌شوند.

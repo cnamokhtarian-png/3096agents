@@ -34,7 +34,7 @@ async function logFailure(scope: string, message: string, meta: Record<string, u
 export async function tg<T = any>(
   method: string,
   payload: Record<string, unknown> = {},
-  opts: { timeoutMs?: number } = {}
+  opts: { timeoutMs?: number; logToConsoleOnly?: boolean } = {}
 ): Promise<TgResult<T>> {
   const token = ENV.telegramToken();
   if (!token) {
@@ -55,13 +55,15 @@ export async function tg<T = any>(
     const json: any = await res.json().catch(() => ({}));
     if (!res.ok || json?.ok === false) {
       const desc = json?.description || `HTTP ${res.status}`;
-      await logFailure(`telegram:${method}`, desc, { status: res.status });
+      if (opts.logToConsoleOnly) console.error(`[telegram:${method}] ${desc}`);
+      else await logFailure(`telegram:${method}`, desc, { status: res.status });
       return { ok: false, error: "telegram_error", description: desc, status: res.status };
     }
     return { ok: true, result: json.result };
   } catch (e: any) {
     const desc = e?.name === "TimeoutError" ? "timeout" : e?.message || "network_error";
-    await logFailure(`telegram:${method}`, desc, { method });
+    if (opts.logToConsoleOnly) console.error(`[telegram:${method}] ${desc}`);
+    else await logFailure(`telegram:${method}`, desc, { method });
     return { ok: false, error: "network_error", description: desc };
   }
 }
@@ -111,7 +113,7 @@ export async function answerCallbackQuery(callbackQueryId: string, text: string,
     callback_query_id: callbackQueryId,
     text,
     show_alert: alert,
-  });
+  }, { timeoutMs: 2000, logToConsoleOnly: true });
 }
 
 export async function getWebhookInfo() {
