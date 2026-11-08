@@ -20,11 +20,15 @@ import { conf } from "@/lib/config";
 import {
   exchangeStatus,
   fetchKlines,
+  fetchTabdealMarketRules,
+  fetchTabdealTopOfBook,
   fetchPublicPrices,
   getAccountBalances,
 } from "@/lib/exchange";
 import { refreshMarket } from "@/lib/market";
 import { buildTechnicalSetup, type TechnicalSetup } from "@/lib/indicators";
+import { planTabdealMarketBuy, validateTabdealLimitBuy } from "@/lib/tabdeal-market";
+import { tradeProposalErrors } from "@/lib/trade-proposal";
 import { scanBountyFeeds } from "@/lib/bounty";
 import { createJob } from "@/lib/jobs";
 import { escapeHtml, notifyAdmin, telegramConfigured } from "@/lib/telegram";
@@ -357,7 +361,7 @@ export async function charterFleetProtocols(options?: { logEachAgent?: boolean }
 /**
  * ۲. موتور زنده «آریا» (A1 - معامله‌گر کریپتو):
  *    دریافت کندل‌های واقعی ۱ ساعته، محاسبه RSI/MACD/MA20/MA50/ATR و سطوح حمایت/مقاومت،
- *    ذخیره در market_snapshots و ارسال کارت پیشنهاد خرید/فروش با حد ضرر دقیق و اهرم کنترل‌شده (1x-3x) به تلگرام.
+ *    ذخیره در market_snapshots و ارسال کارت پیشنهاد خرید/فروش با سطوح پیشنهادی حد سود و ضرر برای معامله نقدی به تلگرام.
  */
 export async function runAriaMarketScan(options?: { forceCardIfNonePending?: boolean }) {
   const [aria] = await db
@@ -378,14 +382,22 @@ export async function runAriaMarketScan(options?: { forceCardIfNonePending?: boo
   // موجودی واقعی صرافی: تنها منبع مجاز برای تعیین اندازهٔ پوزیشن.
   // اگر کلید صرافی ست نشده باشد، هیچ مبلغی «حدس زده» نمی‌شود.
   let availableUsdt: number | null = null;
+  let availableIrt: number | null = null;
   let balanceNote = "کلید API صرافی ست نشده است؛ موجودی قابل معامله قابل خواندن نیست.";
   const exState = await exchangeStatus();
   if (exState.keysConfigured) {
     try {
-      const acc = await getAccountBalances(["USDT"]);
+      const acc = await getAccountBalances(["USDT", "IRT"]);
       const usdt = acc.balances.find((b: { asset: string }) => b.asset === "USDT");
+      const irt = acc.balances.find((b: { asset: string }) => b.asset === "IRT");
       availableUsdt = usdt ? Number(usdt.free) : 0;
-      balanceNote = `موجودی آزاد USDT در صرافی (${exState.exchange} • ${exState.network}): ${availableUsdt}`;
+      availableIrt = irt ? Number(irt.free) : 0;
+      if (!Number.isFinite(availableUsdt) || availableUsdt < 0 || !Number.isFinite(availableIrt) || availableIrt < 0) {
+        availableUsdt = null;
+        availableIrt = null;
+        throw new Error("مقادیر موجودی برگشتی معتبر نیستند");
+      }
+      balanceNote = `موجودی آزاد صرافی (${exState.exchange}): ${availableUsdt} USDT و ${availableIrt} IRT (تومان). موجودی تومان خودکار به تتر تبدیل نمی‌شود.`;
     } catch (e: any) {
       balanceNote = `خواندن موجودی صرافی ناموفق بود: ${e?.message || e}`;
     }
@@ -409,7 +421,7 @@ export async function runAriaMarketScan(options?: { forceCardIfNonePending?: boo
         livePrice: q?.price ?? kl.candles[kl.candles.length - 1].close,
         changePct24h: q?.changePct ?? null,
         source: kl.source,
-        maxLeverage: 3,
+        maxLeverage: 1,
         availableUsdt,
         riskPct: 2,
       });
@@ -533,8 +545,40 @@ export async function runAriaMarketScan(options?: { forceCardIfNonePending?: boo
   }
 
   let proposalCreated: { jobId: number; symbol: string; telegramSent: boolean } | null = null;
+  let proposedQuantity: string | null = null;
+  let proposedQuote: number | null = null;
+  let proposedBudget: string | null = null;
+  let proposedEntry = best.entryPrice;
+  let marketNote = "";
+  // Only a BUY of a USDT spot market can be sized from the available USDT.
+  // The protection lifecycle remains disabled until it is wired end-to-end.
+  if (exState.exchange === "tabdeal" && best.side === "BUY" && best.symbol.endsWith("USDT") && availableUsdt !== null && availableUsdt > 0) {
+    try {
+      const [rules, book] = await Promise.all([fetchTabdealMarketRules(best.symbol), fetchTabdealTopOfBook(best.symbol)]);
+      if (rules.quoteAsset !== "USDT") throw new Error("واحد بازار با موجودی تتر همخوان نیست");
+      // Budget leaves a small reserve; final fills, fees and sell quantity must
+      // still be obtained from the exchange before exits are placed.
+      const budget = (Math.floor(availableUsdt * 98) / 100).toFixed(2);
+      const plan = planTabdealMarketBuy({ budget, ask: String(book.ask), stopLimitPrice: String(best.stopLoss), rules });
+      validateTabdealLimitBuy({quantity:plan.quantity,price:String(book.ask),budget,
+        stopPrice:String(best.stopLoss),targetPrice:String(best.takeProfit),rules});
+      proposedQuantity = plan.quantity;
+      proposedBudget = budget;
+      proposedEntry = book.ask;
+      proposedQuote = Number(plan.quantity) * book.ask;
+      marketNote = `خرید محدود با سقف قیمت ${book.ask} USDT، مقدار ${plan.quantity} ${rules.baseAsset}، سقف مبلغ سفارش ${budget} USDT؛ کارمزد جداگانه و مقدار قطعی پس از اجرا مشخص می‌شود.`;
+    } catch (error) {
+      marketNote = `محاسبه مقدار مجاز در تبدیل ناموفق: ${error instanceof Error ? error.message : "خطای نامشخص"}`;
+    }
+  } else {
+    marketNote = "موجودی تتر، بازار تبدیل یا جهت خرید برای اندازه‌گذاری در دسترس نیست.";
+  }
+  const proposalErrors = tradeProposalErrors({
+    symbol: best.symbol, side: best.side, quantity: proposedQuantity,
+    entryPrice: proposedEntry, stopLoss: best.stopLoss, takeProfit: best.takeProfit,
+  });
   const shouldCreateCard =
-    pendingTrades.length === 0 &&
+    pendingTrades.length === 0 && proposalErrors.length === 0 &&
     (best.actionable || Boolean(options?.forceCardIfNonePending));
 
   if (shouldCreateCard) {
@@ -542,7 +586,7 @@ export async function runAriaMarketScan(options?: { forceCardIfNonePending?: boo
     if (geminiConfigured()) {
       const aiRes = await generateGeminiText(
         `در نقش «آریا»، تحلیلگر ارشد رمزارز، حداکثر در ۲ جمله فارسی دقیق و حرفه‌ای دلیل پیشنهاد معامله زیر را برای مدیرعامل توضیح بده (بدون markdown):\n` +
-          `نماد: ${best.symbol} | جهت: ${best.directionLabel} | ورود: $${best.entryPrice} | حد ضرر: $${best.stopLoss} | حد سود: $${best.takeProfit} | اهرم کنترل‌شده: ${best.leverage}x | RSI(14): ${best.rsi} | MACD Hist: ${best.macdHist} | MA20: ${best.ma20} | MA50: ${best.ma50}`,
+          `نماد: ${best.symbol} | جهت: ${best.directionLabel} | ورود: $${best.entryPrice} | حد ضرر: $${best.stopLoss} | حد سود: $${best.takeProfit} | معامله نقدی | RSI(14): ${best.rsi} | MACD Hist: ${best.macdHist} | MA20: ${best.ma20} | MA50: ${best.ma50}`,
         { maxOutputTokens: 220, temperature: 0.25, timeoutMs: 12000 },
       );
       if (aiRes.ok && aiRes.text) {
@@ -554,26 +598,31 @@ export async function runAriaMarketScan(options?: { forceCardIfNonePending?: boo
       agentId: aria.id,
       agentName: aria.name,
       kind: "trade",
-      title: `پیشنهاد ${best.side === "BUY" ? "خرید" : "فروش"} ${best.symbol} (اهرم کنترل‌شده ${best.leverage}x • حد ضرر $${best.stopLoss})`,
+      title: `تحلیل ${best.side === "BUY" ? "خرید" : "فروش"} نقدی ${best.symbol} (حد ضرر پیشنهادی $${best.stopLoss})`,
       detail: [
         aiReason,
-        `ورود: $${best.entryPrice} | حد ضرر: $${best.stopLoss} | حد سود: $${best.takeProfit} | R/R: ${best.riskReward}`,
-        best.positionUsdt !== null
-          ? `مبلغ سفارش: ${best.positionUsdt} USDT (${best.sizingNote})`
-          : `مبلغ سفارش: تعیین نشده — ${best.sizingNote}`,
+        `امتیاز تحلیل: ${best.confidence} از ۱۰۰؛ احتمال آماری سود محاسبه نشده است.`,
+        `زمان تقریبی: ${best.estimatedDuration}؛ تضمین‌شده نیست.`,
+        `حدها از طریق پایش دوره‌ای پیگیری می‌شوند؛ سفارش ورود نیمه‌پر یا بازمانده پس از یک دقیقه در نوبت بعدی پایش لغو می‌شود.`,
+        `ورود تخمینی: $${proposedEntry} | حد ضرر: $${best.stopLoss} | حد سود: $${best.takeProfit} | R/R: ${best.riskReward}`,
+        marketNote,
       ].join("\n"),
       payload: {
         symbol: best.symbol,
         side: best.side,
         directionLabel: best.directionLabel,
-        quoteOrderQty: best.positionUsdt,
-        entryPrice: best.entryPrice,
+        quantity: proposedQuantity,
+        type: "LIMIT",
+        price: String(proposedEntry),
+        budgetUsdt: proposedBudget,
+        estimatedQuoteUsdt: proposedQuote,
+        entryPrice: proposedEntry,
         stopLoss: best.stopLoss,
         takeProfit: best.takeProfit,
         leverage: best.leverage,
         riskReward: best.riskReward,
         confidence: best.confidence,
-        estimatedProfitUsdt: best.estimatedProfitUsdt,
+        estimatedProfitUsdt: proposedQuote === null ? null : Math.round(proposedQuote * (best.targetPct / 100) * 10000) / 10000,
         estimatedDuration: best.estimatedDuration,
         analysisReason: aiReason,
       },
@@ -593,7 +642,8 @@ export async function runAriaMarketScan(options?: { forceCardIfNonePending?: boo
     setups,
     best,
     proposalCreated,
-    warnings: [...errors, ...(availableUsdt === null ? [balanceNote] : [])],
+    balances: { USDT: availableUsdt, IRT: availableIrt },
+    warnings: [...errors, balanceNote, marketNote, ...(proposalErrors.length ? [`کارت معامله ساخته نشد: ${proposalErrors.join("؛ ")}`] : [])],
   };
 }
 

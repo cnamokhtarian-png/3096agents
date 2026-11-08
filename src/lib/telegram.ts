@@ -146,9 +146,9 @@ export function appBaseUrl(req?: Request) {
 }
 
 /** کیبورد تأیید/رد یک Job واقعی (پروتکل Human-in-the-Loop). */
-export function jobKeyboard(jobId: number, withEdit = true): ReplyMarkup {
+export function jobKeyboard(jobId: number, withEdit = true, canApprove = true): ReplyMarkup {
   const row: InlineButton[] = [
-    { text: "[✅] تأیید و اجرا", callback_data: `ap:${jobId}` },
+    ...(canApprove ? [{ text: "[✅] تأیید و اجرا", callback_data: `ap:${jobId}` }] : []),
     { text: "[❌] رد پیشنهاد", callback_data: `rj:${jobId}` },
   ];
   const second: InlineButton[] = [{ text: "📊 مشاهده در پنل", callback_data: `op:${jobId}` }];
@@ -164,6 +164,7 @@ export async function sendJobApprovalRequest(job: {
   detail?: string;
   risk?: string;
   kind: string;
+  canApprove?: boolean;
   payload?: Record<string, unknown>;
 }) {
   const chatId = ENV.telegramAdminChat();
@@ -184,7 +185,7 @@ export async function sendJobApprovalRequest(job: {
       `• <b>نماد و جهت:</b> <code>${escapeHtml(String(p.symbol))}</code> (${escapeHtml(String(p.directionLabel || p.side || ""))})`,
     );
     metaLines.push(
-      `• <b>نقطه ورود:</b> <code>$${escapeHtml(String(p.entryPrice))}</code> | <b>اهرم کنترل‌شده:</b> <code>${escapeHtml(String(p.leverage || 1))}x</code>`,
+      `• <b>نقطه ورود:</b> <code>$${escapeHtml(String(p.entryPrice))}</code> | <b>ضریب:</b> <code>${escapeHtml(String(p.leverage || 1))}x</code>`,
     );
     if (p.stopLoss && p.takeProfit) {
       metaLines.push(
@@ -192,15 +193,18 @@ export async function sendJobApprovalRequest(job: {
       );
     }
   }
-  if (p.estimatedProfitUsdt !== undefined && Number(p.estimatedProfitUsdt) >= 0) {
+  if (p.estimatedProfitUsdt != null && Number(p.estimatedProfitUsdt) >= 0) {
     metaLines.push(
-      `• 💰 <b>سود / ارزش تخمینی:</b> <code>+${Number(p.estimatedProfitUsdt).toLocaleString("en-US", { maximumFractionDigits: 2 })} USDT</code>`,
+      `• 💰 <b>سود تخمینی در هدف (پیش از کارمزد):</b> <code>+${Number(p.estimatedProfitUsdt).toLocaleString("en-US", { maximumFractionDigits: 2 })} USDT</code>`,
     );
   }
   if (p.estimatedDuration) {
     metaLines.push(
-      `• ⏱ <b>زمان تقریبی:</b> ${escapeHtml(String(p.estimatedDuration))}`,
+      `• ⏱ <b>زمان تخمینی و غیرقطعی:</b> ${escapeHtml(String(p.estimatedDuration))}`,
     );
+  }
+  if (job.kind === "trade" && p.confidence != null) {
+    metaLines.push(`• <b>امتیاز تحلیل:</b> ${escapeHtml(String(p.confidence))} از ۱۰۰ (احتمال آماری سود نیست).`);
   }
   if (p.trustScore !== undefined) {
     metaLines.push(
@@ -222,9 +226,9 @@ export async function sendJobApprovalRequest(job: {
     `📋 عنوان: <b>${escapeHtml(job.title)}</b>\n` +
     `${riskLabel} • نوع: <code>${escapeHtml(job.kind)}</code>\n` +
     (metaLines.length ? `\n${metaLines.join("\n")}\n` : "") +
-    (job.detail && !metaLines.length ? `\n${escapeHtml(job.detail)}\n` : "") +
+    (job.detail ? `\n${escapeHtml(job.detail)}\n` : "") +
     `\n🔒 <i>قفل ایمنی مالی (COO): بدون کلیک شما روی [✅] هیچ واریز، برداشت یا نهایی‌سازی مالی انجام نمی‌شود.</i>`;
-  const res = await sendTelegramMessage(chatId, text, jobKeyboard(job.id));
+  const res = await sendTelegramMessage(chatId, text, jobKeyboard(job.id, true, job.canApprove !== false));
   return res;
 }
 

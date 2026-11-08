@@ -4,7 +4,6 @@ import {
   agentActivityLogs,
   agentJobs,
   agentLogs,
-  exchangeOrders,
   projects,
   systemEvents,
   tasks,
@@ -12,8 +11,10 @@ import {
 } from "@/db/schema";
 import { and, asc, desc, eq, gt, inArray, lt, sql } from "drizzle-orm";
 import { ConfigError, ENV } from "@/lib/env";
-import { ExchangeError, placeRealOrder } from "@/lib/exchange";
-import { confirmDeposit, ingestExternalIncome, recordAgentError } from "@/lib/agent-execution";
+import { executionOutcome } from "@/lib/job-outcome";
+import { ExchangeError } from "@/lib/exchange";
+import { submitApprovedTabdealEntry } from "@/lib/entry-order";
+import { confirmDeposit, recordAgentError } from "@/lib/agent-execution";
 import { generateAgentReport } from "@/lib/report";
 import {
   editTelegramMessage,
@@ -85,7 +86,7 @@ async function legacyLog(agent: string, action: string, status: string, detail: 
 }
 
 export async function createJob(input: CreateJobInput) {
-  const requiresApproval = input.requiresApproval !== false;
+  const requiresApproval = input.kind === "trade" || input.requiresApproval !== false;
 
   // پیش‌بررسی: اگر کار از همین ابتدا آماده اجرای واقعی نیست، مشکل
   // صریح در کار و کارت تأیید نوشته می‌شود تا مدیرعامل بداند چرا دکمه
@@ -163,6 +164,7 @@ export async function createJob(input: CreateJobInput) {
         detail: job.detail,
         risk: job.risk,
         kind: job.kind,
+        canApprove: preflight.ready,
         payload: (job.payload || {}) as Record<string, unknown>,
       });
       if (res.ok) {
@@ -301,7 +303,7 @@ export async function approveJob(id: number, actor: string) {
 
   const execution = await executeJob(claimed, actor);
   await syncTelegramApproval(claimed, execution);
-  return { ok: execution.ok, job: (await getJob(id))!, execution };
+  return { ...executionOutcome(execution), job: (await getJob(id))! };
 }
 
 type ExecutionResult = { ok: boolean; result?: unknown; error?: string; code?: string };
@@ -350,116 +352,21 @@ async function markFailed(job: JobRecord, message: string, code = "execution_fai
 }
 
 async function executeTrade(job: JobRecord, _actor: string): Promise<ExecutionResult> {
-  const p = (job.payload || {}) as Record<string, any>;
-  const symbol = String(p.symbol || "").toUpperCase();
-  const side = String(p.side || "BUY").toUpperCase() as "BUY" | "SELL";
-  if (!symbol) return markFailed(job, "نماد معاملاتی در Payload مشخص نشده است", "invalid_payload");
-
+  // This guard remains active until the full entry/exit lifecycle and scheduler
+  // are ready to deploy; legacy jobs cannot bypass approval or submit an order.
+  const preflight = await preflightJobKind("trade", (job.payload || {}) as Record<string, any>);
+  if (!preflight.ready) return markNeedsConfig(job, preflight.reason, "trade_not_ready");
   try {
-    const order = await placeRealOrder({
-      symbol,
-      side,
-      type: (p.type as "MARKET" | "LIMIT") || "MARKET",
-      quantity: p.quantity ? Number(p.quantity) : undefined,
-      quoteOrderQty: p.quoteOrderQty ? Number(p.quoteOrderQty) : undefined,
-      price: p.price ? Number(p.price) : undefined,
-    });
-
-    await db.insert(exchangeOrders).values({
-      exchange: order.exchange,
-      testnet: order.testnet,
-      symbol: order.symbol,
-      side: order.side,
-      orderType: (p.type as string) || "MARKET",
-      quantity: p.quantity ? String(p.quantity) : null,
-      quoteQty: p.quoteOrderQty ? String(p.quoteOrderQty) : null,
-      price: p.price ? String(p.price) : null,
-      status: order.status,
-      clientOrderId: order.clientOrderId,
-      exchangeOrderId: order.orderId,
-      agentName: job.agentName,
-      jobId: job.id,
-      raw: order.raw as any,
-    });
-
-    await logActivity({
-      agentId: job.agentId,
-      agentName: job.agentName,
-      action: `سفارش واقعی ${side} ${symbol} ارسال شد`,
-      status: "success",
-      detail: `شناسه صرافی: ${order.orderId} • وضعیت: ${order.status} • مقدار اجراشده: ${order.executedQty} • ${order.testnet ? "Testnet" : "Mainnet"}`,
-      jobId: job.id,
-      source: "exchange",
-      meta: { order },
-    });
-    await legacyLog(
-      job.agentName,
-      `سفارش ${side} ${symbol}`,
-      "success",
-      `orderId=${order.orderId} status=${order.status}`
-    );
-
-    // اگر سود محقق‌شده با شاهد تراکنش همراه باشد، همان جریان تأیید واقعی طی می‌شود
-    let profit: Record<string, unknown> | null = null;
-    const profitUsdt = Number(p.profitUsdt || 0);
-    const profitTxHash = String(p.profitTxHash || "").trim();
-    if (profitUsdt > 0) {
-      if (!profitTxHash || profitTxHash.length < 16) {
-        profit = {
-          status: "skipped",
-          reason: "سود اعلام شده بدون هش تراکنش قابل ثبت نیست",
-        };
-      } else {
-        const income = await ingestExternalIncome({
-          agentName: job.agentName,
-          title: `سود محقق‌شده معامله ${symbol}`,
-          amountUsdt: profitUsdt,
-          txHash: profitTxHash,
-          network: String(p.profitNetwork || ""),
-          source: "exchange",
-          jobId: job.id,
-        });
-        profit = { status: income.status, verification: income.verification };
-        if (income.status === "pending_verification") {
-          await createJob({
-            agentId: job.agentId,
-            agentName: job.agentName,
-            kind: "confirm_deposit",
-            title: `تأیید سود معامله ${symbol} — ${profitUsdt} USDT`,
-            detail: `هش: ${profitTxHash}\nدلیل نیاز به تأیید: ${(income.verification as any)?.reason || "بدون تأیید زنجیره‌ای"}`,
-            payload: {
-              transactionId: (income as any).transaction?.id,
-              txHash: profitTxHash,
-              verifiedOnchain: false,
-            },
-            risk: "medium",
-            requiresApproval: true,
-          });
-        }
-      }
-    }
-
-    return {
-      ok: true,
-      result: {
-        order,
-        profit,
-        note:
-          "سفارش واقعاً به صرافی ارسال شد. سود/زیان فقط با شاهد واریز (هش تراکنش) در درآمد ثبت می‌شود.",
-      },
-    };
-  } catch (e: any) {
-    if (e instanceof ConfigError) {
-      return markNeedsConfig(
-        job,
-        `${e.message} (کلیدهای ناقص: ${e.missing.join(", ")}) — پس از تنظیم، دکمه «تلاش دوباره» را بزنید.`,
-        e.code,
-      );
-    }
-    if (e instanceof ExchangeError) {
-      return markFailed(job, e.message, e.code);
-    }
-    return markFailed(job, e?.message || "خطای نامشخص در ارسال سفارش", "exchange_error");
+    const result = await submitApprovedTabdealEntry(job.id);
+    if (result.status === "unknown") return markFailed(job,
+      `نتیجه سفارش نامشخص است؛ شناسه ${result.clientOrderId} در صرافی استعلام می‌شود و سفارش تکرار نمی‌شود.`, "entry_unknown");
+    if (result.status === "already_claimed") return markFailed(job,
+      "برای این تأیید قبلاً تلاش سفارش ثبت شده است؛ فقط استعلام انجام می‌شود.", "entry_already_claimed");
+    return { ok:true, result: { ...result, note:"سفارش ورود ارسال شد؛ اجرای واقعی و کارمزد پس از استعلام صرافی مشخص می‌شود." } };
+  } catch (error: unknown) {
+    if (error instanceof ConfigError) return markNeedsConfig(job,error.message,error.code);
+    if (error instanceof ExchangeError) return markFailed(job,error.message,error.code);
+    return markFailed(job,error instanceof Error ? error.message : "خطای ارسال سفارش", "entry_error");
   }
 }
 
@@ -786,7 +693,7 @@ export async function retryJob(id: number, actor: string) {
 
   const execution = await executeJob(job, actor);
   await syncTelegramApproval(job, execution);
-  return { ok: execution.ok, job: (await getJob(id))!, execution };
+  return { ...executionOutcome(execution), job: (await getJob(id))! };
 }
 
 /** اجرای کارهای صف که نیازی به تأیید ندارند (کرون). */
@@ -832,13 +739,15 @@ export async function remindPendingApprovals(olderThanMinutes = 45, windowMinute
 
   let sent = 0;
   for (const job of rows) {
+    const verdict = await approvalVerdict(job);
     const res = await sendJobApprovalRequest({
       id: job.id,
       agentName: job.agentName,
       title: `یادآوری — ${job.title}`,
-      detail: job.detail,
+      detail: verdict.allowed ? job.detail : `${job.detail}\n\n${verdict.message}`,
       risk: job.risk,
       kind: job.kind,
+      canApprove: verdict.allowed,
       payload: (job.payload || {}) as Record<string, unknown>,
     });
     if (res.ok) sent++;

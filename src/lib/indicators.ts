@@ -238,10 +238,8 @@ export function buildTechnicalSetup(input: {
   const targetPct = Math.round((Math.abs(takeProfit - price) / price) * 10000) / 100;
   const riskReward = stopPct > 0 ? Math.round((targetPct / stopPct) * 100) / 100 : 2.2;
 
-  // کنترل سخت‌گیرانه اهرم بر اساس نوسان ATR
-  const capLev = Math.max(1, Math.min(5, Math.round(input.maxLeverage ?? 3)));
-  const safeLev = volatilityPct > 2.5 ? 1 : volatilityPct > 1.5 ? Math.min(2, capLev) : Math.min(3, capLev);
-  const leverage = Math.max(1, safeLev);
+  // The exchange client submits spot orders, not leveraged positions.
+  const leverage = 1;
 
   // ⛔ هیچ مبلغ ساختگی: اندازهٔ پوزیشن فقط از موجودی واقعی صرافی و
   // درصد ریسک تنظیم‌شده محاسبه می‌شود. اگر موجودی خوانده نشده باشد،
@@ -291,7 +289,7 @@ export function buildTechnicalSetup(input: {
     symbol,
     actionable,
     side,
-    directionLabel: side === "BUY" ? "خرید / LONG" : "فروش / SHORT",
+    directionLabel: side === "BUY" ? "خرید نقدی" : "فروش نقدی",
     entryPrice: roundPrice(price),
     stopLoss,
     takeProfit,
