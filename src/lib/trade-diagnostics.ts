@@ -10,13 +10,13 @@ export async function diagnoseLegacyTabdealOrders() {
   const failure=(stage:string,e:unknown)=>{const info=e instanceof ExchangeError ? e.detail as {status?:unknown}|undefined : undefined;
     errors.push({stage,code:e instanceof ExchangeError?e.code:'diagnostic_failed',...(typeof info?.status==='number'?{status:info.status}:{})});};
   let account:{canTrade:boolean;accountType:string|null;balances:Array<{asset:string;free:number;locked:number;total:number}>}|null=null;
-  try { account=await getAccountBalances(['USDT','BTC','ETH']); } catch(e) { failure('account',e); }
+  try { const result=await getAccountBalances(['USDT','BTC','ETH']); account={...result,balances:result.balances.filter(b=>b.free!==0 || b.locked!==0)}; } catch(e) { failure('account',e); }
   const markets:Array<{symbol:string;available:boolean}> = [];
   for (const symbol of ['BTCUSDT','ETHUSDT']) {
     try { await Promise.all([fetchTabdealMarketRules(symbol),fetchTabdealTopOfBook(symbol)]);markets.push({symbol,available:true}); }
     catch(e) { markets.push({symbol,available:false});failure(`market_${symbol}`,e); }
   }
-  const jobs=await db.select({id:agentJobs.id,payload:agentJobs.payload,approvedAt:agentJobs.approvedAt}).from(agentJobs).where(inArray(agentJobs.id,[88,89]));
+  const jobs=await db.select({id:agentJobs.id,payload:agentJobs.payload,approvedAt:agentJobs.approvedAt}).from(agentJobs).where(inArray(agentJobs.id,[88,89,90]));
   const history:Array<Record<string,unknown>>=[];
   for(const job of jobs) {
     const symbol=String((job.payload as Record<string,unknown>)?.symbol ?? '');const timestamp=job.approvedAt?.getTime();
