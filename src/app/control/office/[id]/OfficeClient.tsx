@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { protectedTradeErrors, protectedTradeSummary } from "@/lib/protected-trade-contract";
 import RoomScene from "@/components/RoomScene";
 import { themeFor, statusInfo, relativeTime } from "@/lib/office-theme";
 
@@ -54,7 +55,10 @@ export default function OfficeClient({ agentId }: { agentId: number }) {
   const [busy, setBusy] = useState<string>("");
   const [report, setReport] = useState<{ text: string; source: string; warning?: string } | null>(null);
   const [tradeOpen, setTradeOpen] = useState(false);
-  const [trade, setTrade] = useState({ symbol: "BTCUSDT", side: "BUY", quoteOrderQty: "20" });
+  const [trade, setTrade] = useState({ symbol: "ETHUSDT", quantity: "", price: "", budgetUsdt: "", stopLoss: "", takeProfit: "" });
+  const tradePayload = { ...trade, side: "BUY", type: "LIMIT", leverage: 1, entryPrice: trade.price };
+  const tradeErrors = protectedTradeErrors(tradePayload);
+  const tradePreview = protectedTradeSummary(tradePayload);
 
   const notify = (t: string) => {
     setToast(t);
@@ -292,42 +296,38 @@ export default function OfficeClient({ agentId }: { agentId: number }) {
                   ))}
                 </select>
               </div>
-              <div>
-                <label className="block text-[10px] text-slate-400">جهت</label>
-                <select
-                  value={trade.side}
-                  onChange={(e) => setTrade({ ...trade, side: e.target.value })}
-                  className="mt-1 rounded-lg border border-white/15 bg-white/5 px-2 py-1.5 text-xs"
-                >
-                  <option value="BUY" className="text-black">خرید (BUY)</option>
-                  <option value="SELL" className="text-black">فروش (SELL)</option>
-                </select>
-              </div>
-              <div>
-                <label className="block text-[10px] text-slate-400">مبلغ (USDT)</label>
-                <input
-                  value={trade.quoteOrderQty}
-                  onChange={(e) => setTrade({ ...trade, quoteOrderQty: e.target.value })}
-                  dir="ltr"
-                  className="mt-1 w-28 rounded-lg border border-white/15 bg-white/5 px-2 py-1.5 text-xs"
-                />
+              <p className="w-full text-xs text-amber-200">خرید نقدی BUY / LIMIT — بدون اهرم. تمام مقادیر را با ارقام انگلیسی وارد کنید.</p>
+              {([
+                ["quantity", "مقدار ارز پایه (نه مبلغ تتر)"],
+                ["price", "قیمت محدود ورود (USDT)"],
+                ["budgetUsdt", "سقف بودجه خرید (USDT)"],
+                ["stopLoss", "حد ضرر (USDT)"],
+                ["takeProfit", "حد سود (USDT)"],
+              ] as const).map(([key, label]) => (
+                <div key={key}>
+                  <label htmlFor={`trade-${key}`} className="block text-[10px] text-slate-400">{label}</label>
+                  <input id={`trade-${key}`} value={trade[key]} inputMode="decimal" autoComplete="off"
+                    onChange={(e) => setTrade({ ...trade, [key]: e.target.value })} dir="ltr"
+                    className="mt-1 w-40 rounded-lg border border-white/15 bg-white/5 px-2 py-1.5 text-xs" />
+                </div>
+              ))}
+              <div className="w-full rounded-lg border border-white/15 p-3 text-xs leading-6" aria-live="polite">
+                <p className="font-bold">پیش‌نمایش همان مشخصات کارت تلگرام</p>
+                <p className="whitespace-pre-line">{tradePreview.text}</p>
               </div>
               <button
-                onClick={() =>
-                  command(
-                    "request_trade",
-                    { symbol: trade.symbol, side: trade.side, quoteOrderQty: Number(trade.quoteOrderQty) },
-                    "درخواست معامله ثبت شد"
-                  )
-                }
-                className="rounded-lg bg-amber-400 px-3 py-2 text-xs font-black text-black"
+                disabled={tradeErrors.length > 0 || busy.startsWith("request_trade")}
+                onClick={() => command("request_trade", tradePayload, "درخواست معامله ثبت شد")}
+                className="rounded-lg bg-amber-400 px-3 py-2 text-xs font-black text-black disabled:cursor-not-allowed disabled:opacity-40"
               >
-                ارسال برای تأیید مدیرعامل
+                {busy.startsWith("request_trade") ? "در حال بررسی و ثبت…" : "ثبت درخواست و ارسال برای تأیید"}
               </button>
-              <p className="text-[10px] leading-5 text-slate-400">
-                سفارش تا تأیید شما در تلگرام یا پنل ارسال نمی‌شود. با تأیید، سفارش واقعی به صرافی می‌رود.
+              <p className="w-full text-[10px] leading-5 text-slate-400">
+                این دکمه سفارش ارسال نمی‌کند. سرور پیش از ساخت کارت، محدودیت بازار را بررسی می‌کند.
+                درخواست کامل ممکن است به‌علت قفل اجرایی همچنان غیرقابل‌تأیید باشد.
+                سقف بودجه، ارزش خرید پیش از کارمزد است؛ کارمزد ممکن است جداگانه کسر شود.
                 {!infra.exchange.keysConfigured && " ⚠️ کلید API صرافی ست نشده است."}
-                {!infra.exchange.tradingEnabled && " ⚠️ AGENT_TRADING_ENABLED=false است."}
+                {!infra.exchange.tradingEnabled && " ⚠️ قفل عمومی معامله خاموش است."}
               </p>
               {!infra.exchange?.canExecuteOrders && (
                 <div className="w-full rounded-xl border border-orange-400/30 bg-orange-500/10 p-2">

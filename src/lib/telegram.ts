@@ -1,3 +1,4 @@
+import { protectedTradeSummary } from "@/lib/protected-trade-contract";
 import { ConfigError, ENV } from "@/lib/env";
 import { db } from "@/db";
 import { systemEvents } from "@/db/schema";
@@ -179,8 +180,9 @@ export async function sendJobApprovalRequest(job: {
   const riskLabel =
     job.risk === "high" ? "🔴 ریسک بالا" : job.risk === "low" ? "🟢 ریسک پایین" : "🟡 ریسک متوسط";
 
-  const metaLines: string[] = [];
-  if (p.symbol && p.entryPrice) {
+  const tradeSummary = job.kind === "trade" ? protectedTradeSummary(p) : null;
+  const metaLines: string[] = tradeSummary && !job.detail?.includes(tradeSummary.text) ? [escapeHtml(tradeSummary.text)] : [];
+  if (job.kind !== "trade" && p.symbol && p.entryPrice) {
     metaLines.push(
       `• <b>نماد و جهت:</b> <code>${escapeHtml(String(p.symbol))}</code> (${escapeHtml(String(p.directionLabel || p.side || ""))})`,
     );
@@ -227,8 +229,10 @@ export async function sendJobApprovalRequest(job: {
     `${riskLabel} • نوع: <code>${escapeHtml(job.kind)}</code>\n` +
     (metaLines.length ? `\n${metaLines.join("\n")}\n` : "") +
     (job.detail ? `\n${escapeHtml(job.detail)}\n` : "") +
-    `\n🔒 <i>قفل ایمنی مالی (COO): بدون کلیک شما روی [✅] هیچ واریز، برداشت یا نهایی‌سازی مالی انجام نمی‌شود.</i>`;
-  const res = await sendTelegramMessage(chatId, text, jobKeyboard(job.id, true, job.canApprove !== false));
+    (job.kind === "trade"
+      ? `\n🔒 <i>ساخت این کارت سفارش ارسال نمی‌کند. ورود نیازمند آمادگی سیستم و تأیید شماست؛ پس از ورود، خروج و تسویه پوزیشن تأییدشده می‌تواند خودکار باشد.</i>`
+      : `\n🔒 <i>عملیات حساس این درخواست نیازمند تأیید شماست.</i>`);
+  const res = await sendTelegramMessage(chatId, text, jobKeyboard(job.id, true, job.kind === "trade" ? job.canApprove === true && tradeSummary?.valid === true : job.canApprove !== false));
   return res;
 }
 

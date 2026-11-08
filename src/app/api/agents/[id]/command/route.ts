@@ -1,3 +1,6 @@
+import { normalizeProtectedTrade, protectedTradeErrors } from "@/lib/protected-trade-contract";
+import { fetchTabdealMarketRules } from "@/lib/exchange";
+import { validateTabdealLimitBuy } from "@/lib/tabdeal-market";
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db";
 import { agents, agentActivityLogs } from "@/db/schema";
@@ -102,16 +105,16 @@ export async function POST(
 
     // ── ۲) درخواست معامله واقعی (نیازمند تأیید مدیرعامل) ────────────────
     case "request_trade": {
-      const symbol = String(body?.symbol || "BTCUSDT").toUpperCase();
-      const side =
-        String(body?.side || "BUY").toUpperCase() === "SELL" ? "SELL" : "BUY";
-      const quoteOrderQty = Number(body?.quoteOrderQty || 0);
-      const quantity = Number(body?.quantity || 0);
-      if (!quoteOrderQty && !quantity) {
-        return NextResponse.json(
-          { error: "مقدار سفارش (quoteOrderQty یا quantity) لازم است" },
-          { status: 400 },
-        );
+      const errors = protectedTradeErrors(body);
+      if (errors.length) return NextResponse.json({ ok:false, error:errors.join("؛ "), errors },{status:400});
+      const payload = normalizeProtectedTrade(body);
+      try {
+        const rules = await fetchTabdealMarketRules(payload.symbol);
+        validateTabdealLimitBuy({quantity:payload.quantity,price:payload.price,budget:payload.budgetUsdt,
+          stopPrice:payload.stopLoss,targetPrice:payload.takeProfit,rules});
+      } catch (error) {
+        const code = error instanceof Error && /^[a-z_]{1,80}$/.test(error.message) ? error.message : "market_validation_unavailable";
+        return NextResponse.json({ok:false,error:"درخواست ثبت نشد؛ بررسی حداقل مبلغ، گام مقدار و قیمت بازار ناموفق بود.",code},{status:422});
       }
 
       // پیش‌بررسی: اگر کلید صرافی/قفل معامله آماده نیست، همان‌جا با
@@ -119,7 +122,7 @@ export async function POST(
       const exchange = await exchangeStatus();
       const preflight = await preflightJobKind(
         "trade",
-        { symbol, side, quoteOrderQty, quantity },
+        payload,
         { exchange },
       );
 
@@ -127,10 +130,10 @@ export async function POST(
         agentId: agent.id,
         agentName: agent.name,
         kind: "trade",
-        title: `سفارش ${side} ${symbol}${quoteOrderQty ? ` به ارزش ${quoteOrderQty} USDT` : ` — مقدار ${quantity}`}`,
+        title: `خرید نقدی LIMIT ${payload.symbol} — سقف بودجه ${payload.budgetUsdt} USDT`,
         detail:
-          "این سفارش پس از تأیید شما به‌صورت واقعی به صرافی ارسال می‌شود. سود/زیان فقط پس از بسته‌شدن پوزیشن قابل ثبت است.",
-        payload: { symbol, side, type: "MARKET", quoteOrderQty, quantity },
+          "ثبت درخواست به معنی ارسال سفارش نیست. اجرا فقط پس از رفع موانع و تأیید مجدد شما ممکن است. حد سود و ضرر نرم‌افزاری هستند؛ قیمت خروج تضمین نمی‌شود.",
+        payload,
         risk: "high",
         requiresApproval: true,
       });

@@ -5,7 +5,7 @@ import {
 } from "@/lib/exchange";
 import { ENV } from "@/lib/env";
 import { protectedTradeReadiness } from "@/lib/trade-readiness";
-import { tradeProposalErrors } from "@/lib/trade-proposal";
+import { protectedTradeErrors } from "@/lib/protected-trade-contract";
 import { telegramConfigured } from "@/lib/telegram";
 
 /**
@@ -117,7 +117,7 @@ export async function preflightJobKind(
     case "trade": {
       const protection = await protectedTradeReadiness();
       if (protection) blockers.push(protection);
-      for (const label of tradeProposalErrors(payload)) {
+      for (const label of protectedTradeErrors(payload)) {
         blockers.push({ code: "invalid_trade_proposal", label, missing: [], action: "پیشنهاد کامل و معتبر بسازید." });
       }
       const symbol = String(payload.symbol || "").trim();

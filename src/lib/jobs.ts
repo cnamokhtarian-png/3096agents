@@ -1,3 +1,4 @@
+import { protectedTradeErrors, protectedTradeSummary } from "@/lib/protected-trade-contract";
 import { db } from "@/db";
 import {
   agents,
@@ -86,6 +87,11 @@ async function legacyLog(agent: string, action: string, status: string, detail: 
 }
 
 export async function createJob(input: CreateJobInput) {
+  // Reject malformed proposals before any database write or Telegram side effect.
+  if (input.kind === "trade") {
+    const errors = protectedTradeErrors((input.payload || {}) as Record<string, unknown>);
+    if (errors.length) throw new Error(`درخواست معامله نامعتبر: ${errors.join("؛ ")}`);
+  }
   const requiresApproval = input.kind === "trade" || input.requiresApproval !== false;
 
   // پیش‌بررسی: اگر کار از همین ابتدا آماده اجرای واقعی نیست، مشکل
@@ -103,7 +109,8 @@ export async function createJob(input: CreateJobInput) {
         ...preflight.blockers.map((b) => `   ↳ ${b.action}`),
       ].join("\n");
 
-  const detail = [input.detail ?? "", blockerNote].filter(Boolean).join("\n\n");
+  const tradeSummary = input.kind === "trade" ? protectedTradeSummary((input.payload || {}) as Record<string, unknown>).text : "";
+  const detail = [tradeSummary, input.detail ?? "", blockerNote].filter(Boolean).join("\n\n");
 
   const [job] = await db
     .insert(agentJobs)
