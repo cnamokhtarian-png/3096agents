@@ -34,3 +34,21 @@ Supersedes the pending-migration statements in earlier readiness reports.
 - Exchange connectivity, live account permissions, exchange minimums and real
   execution are not certified by offline tests or schema checks.
 - Deployment/scheduler result is recorded below only after tool verification.
+
+## Verified release and scheduler
+- Full verification result: **73 tests passed, 0 failed**, plus TypeScript, lint and build.
+- Separate network-blocked dry-run rerun: **44 tests passed, 0 failed**.
+- Production deployment `dpl_ACe6H5LKBHLSxLAPAL46K3j1xha5` is READY/PROMOTED,
+  serving commit `1bbe6f689328731ada2f581fa8e9607297ebab98` from the Arena branch.
+- Signed scheduler probe request 77 returned HTTP 200, ok=true, mode=observe,
+  actualOrders=0, intended commit SHA. Persistent application cron run ID: 73.
+- Enabled pg_cron job `aria-minute`, jobid 1, schedule `* * * * *`, only after
+  verifying that response. This uses external Supabase scheduling, not a claimed
+  minute-level Vercel Hobby Cron entitlement.
+- Production counts after probe: positions=0, entry_fills=0, exit_fills=0.
+- No new exchange credentials are needed for the completed observation test;
+  exchange-side credential validity/trade permissions remain untested.
+- `scripts/aria-status.sql` provides read-only dispatch/HTTP/application checks.
+- Autonomous minute execution verified after activation: request 78 dispatched at
+  2026-11-08 16:38:00 UTC, HTTP 200, not timed out, mode=observe. This is a real
+  scheduled tick, distinct from the manual probe; not evidence of live trading.
