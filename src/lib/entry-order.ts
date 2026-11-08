@@ -1,3 +1,4 @@
+import { protectedTradeReadiness } from '@/lib/trade-readiness';
 import { pool } from '@/db';
 import { fetchTabdealMarketRules, placeRealOrder } from '@/lib/exchange';
 import { validateTabdealLimitBuy } from '@/lib/tabdeal-market';
@@ -7,6 +8,8 @@ import { escapeHtml, notifyAdmin } from '@/lib/telegram';
 /** Send only the exact price-capped LIMIT intent in an individually approved
  * job. A DB claim persists an unknown attempt before the exchange call. */
 export async function submitApprovedTabdealEntry(jobId: number) {
+  const protection = await protectedTradeReadiness();
+  if (protection) throw new Error(protection.code);
   if (!Number.isSafeInteger(jobId) || jobId <= 0) throw new Error('invalid_job_id');
   const data = await pool.query<{ payload: Record<string, unknown> }>(
     `SELECT payload FROM agentos.agent_jobs WHERE id=$1 AND kind='trade' AND requires_approval=true AND approved_at IS NOT NULL AND status='running'`, [jobId]);

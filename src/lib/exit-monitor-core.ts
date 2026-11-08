@@ -1,3 +1,4 @@
+import Decimal from 'decimal.js';
 /**
  * Monitor one pre-approved, persisted long position. The caller must provide an
  * atomic database claim that stores a unique client ID before returning true.
@@ -34,7 +35,7 @@ export async function monitorOneExit(position: ExitCandidate, deps: {
   const reason: ExitTrigger | null = position.exitReason ?? (quote.bid <= position.stopPrice ? 'stop_loss' : quote.bid >= position.targetPrice ? 'take_profit' : null);
   if (!reason) return { status: 'hold' as const };
   const sellQuantity = deps.prepareQuantity ? await deps.prepareQuantity(position,quote.bid) : position.remainingQuantity;
-  if (!/^\d+(?:\.\d+)?$/.test(sellQuantity) || !/[1-9]/.test(sellQuantity) || Number(sellQuantity) > Number(position.remainingQuantity)) throw new Error('invalid_sell_quantity');
+  if (!/^\d+(?:\.\d+)?$/.test(sellQuantity) || !/[1-9]/.test(sellQuantity) || new Decimal(sellQuantity).gt(position.remainingQuantity)) throw new Error('invalid_sell_quantity');
   if (deps.now() - quote.requestStartedAt > deps.maxQuoteAgeMs) throw new Error('stale_or_invalid_quote');
   const intent: ExitIntent = { ...position, reason, sellQuantity, clientOrderId: `exit_${position.id}_${position.nextAttempt ?? 1}` };
   // This must atomically record an UNKNOWN attempt and take ownership of the

@@ -74,7 +74,7 @@ export async function reconcilePendingTabdealEntries(limit = 3) {
       results.push({ positionId:row.id,ok:true,state:result.state });
     } catch (error) {
       const code = error instanceof Error && /^[a-z0-9_]{1,80}$/.test(error.message) ? error.message : 'entry_reconcile_failed';
-      await pool.query('UPDATE agentos.live_trade_positions SET last_checked_at=now(),last_error=$2 WHERE id=$1', [row.id,code]);
+      await pool.query('UPDATE agentos.live_trade_positions SET last_checked_at=now(),last_error=$2 WHERE id=$1', [row.id,code]).catch(()=>{});
       results.push({ positionId:row.id,ok:false,error:code });
     }
   }

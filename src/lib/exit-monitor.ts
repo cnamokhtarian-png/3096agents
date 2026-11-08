@@ -87,7 +87,7 @@ export async function monitorApprovedTabdealPositions(limit = 3) {
       results.push({ positionId:row.id, status:result.status });
     } catch (error) {
       const code=error instanceof Error && error.message==='unsellable_market_dust' ? 'unsellable_market_dust' : 'monitor_failed';
-      await pool.query(`UPDATE agentos.live_trade_positions SET last_checked_at=now(),last_error=$2,state=CASE WHEN $2='unsellable_market_dust' AND exit_reason IS NOT NULL THEN 'requires_attention' ELSE state END WHERE id=$1`, [row.id,code]);
+      await pool.query(`UPDATE agentos.live_trade_positions SET last_checked_at=now(),last_error=$2,state=CASE WHEN $2='unsellable_market_dust' AND exit_reason IS NOT NULL THEN 'requires_attention' ELSE state END WHERE id=$1`, [row.id,code]).catch(()=>{});
       if (code==='unsellable_market_dust') await notifyAdmin(`⚠️ باقی‌مانده پوزیشن #${escapeHtml(row.id)} کمتر از حد مجاز فروش در تبدیل است و بسته‌شده محسوب نمی‌شود.`).catch(()=>{});
       results.push({ positionId:row.id, status:'error' });
     }

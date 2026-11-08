@@ -35,3 +35,9 @@ test('confirmed terminal partial exit continues even if price rebounds',async()=
  const r=await monitorOneExit({...p,nextAttempt:2,exitReason:'stop_loss'},deps);
  assert.equal(r.status,'submitted');assert.deepEqual(calls[0],['claim','exit_1_2']);
 });
+test('decimal quantity above balance is rejected even when Number would round equally',async()=>{
+ const {deps,calls}=make();
+ deps.prepareQuantity=async()=> '0.000024000000000000000001';
+ await assert.rejects(monitorOneExit(p,deps),/invalid_sell_quantity/);
+ assert.equal(calls.length,0);
+});

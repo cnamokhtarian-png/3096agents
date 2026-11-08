@@ -1,3 +1,6 @@
+import { ariaSchedulerAuthorized } from "@/lib/aria-cron-policy";
+import { pool } from "@/db";
+import { runAriaCycle } from "@/lib/aria-cycle-core";
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db";
 import { cronRuns, systemEvents, transactions } from "@/db/schema";
@@ -21,7 +24,7 @@ import { generateCooExecutiveReport, runFleetCycle } from "@/lib/coo";
 import { escapeHtml, notifyAdmin } from "@/lib/telegram";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 60;
+export const maxDuration = 120;
 
 /**
  * Vercel Cron — اجرای واقعی پس‌زمینه.
@@ -36,7 +39,8 @@ export const maxDuration = 60;
  *   cleanup   → رویدادهای قدیمی سیستم را پاک می‌کند
  */
 
-function authorized(req: NextRequest) {
+function authorized(req: NextRequest, job: string) {
+  if (ariaSchedulerAuthorized(job, req.headers.get("x-aria-cron-secret") || "", process.env.ARIA_CRON_SECRET)) return { ok: true };
   const secret = ENV.cronSecret();
   if (!secret) return { ok: false, reason: "CRON_SECRET ست نشده است" };
   const auth = req.headers.get("authorization") || "";
@@ -64,7 +68,7 @@ export async function POST(req: NextRequest) {
 }
 
 async function run(req: NextRequest, jobParam: string) {
-  const auth = authorized(req);
+  const auth = authorized(req, jobParam);
   if (!auth.ok) {
     return NextResponse.json(
       { ok: false, error: auth.reason },
@@ -84,6 +88,7 @@ async function run(req: NextRequest, jobParam: string) {
     "trade_diagnostics",
     "trade_reconcile",
     "trade_monitor",
+    "aria",
   ].includes(jobParam)
     ? jobParam
     : "full";
@@ -121,16 +126,20 @@ async function run(req: NextRequest, jobParam: string) {
     }
     // The existing five-minute full endpoint can run the lifecycle once the
     // migrations and end-to-end checks are complete and it is explicitly enabled.
-    if (job === "trade_monitor" || (job === "full" && process.env.TRADE_LIFECYCLE_ENABLED === "true")) {
-      const entries = await reconcilePendingTabdealEntries();
-      const monitored = await monitorApprovedTabdealPositions();
-      const reconciled = await reconcilePendingTabdealExits();
-      steps.entryReconcile = entries;
-      steps.tradeMonitor = monitored;
-      steps.tradeReconcile = reconciled;
-      const reports = await sendPendingTradeCloseReports();
-      steps.tradeCloseReports = reports;
-      if (!entries.ok || !monitored.ok || !reconciled.ok || !reports.ok) status = "partial";
+    if (job === "aria" || job === "trade_monitor" || (job === "full" && process.env.TRADE_LIFECYCLE_ENABLED === "true")) {
+      if (job === "aria" && process.env.ARIA_EXECUTION_MODE !== "live") {
+        const { rows } = await pool.query("SELECT state,count(*)::int AS count FROM agentos.live_trade_positions GROUP BY state");
+        steps.ariaObservation = { ok: true, mode: "observe", release: process.env.VERCEL_GIT_COMMIT_SHA || "local", actualOrders: 0, positions: rows };
+      } else {
+      const cycle = await runAriaCycle({
+        entries: reconcilePendingTabdealEntries,
+        exits: reconcilePendingTabdealExits,
+        monitor: monitorApprovedTabdealPositions,
+        reports: sendPendingTradeCloseReports,
+      });
+      Object.assign(steps, cycle.steps);
+      if (!cycle.ok) status = "partial";
+      }
     }
     if (job === "market" || job === "full") {
       const r = await refreshMarket();
@@ -242,13 +251,13 @@ async function run(req: NextRequest, jobParam: string) {
       .where(eq(cronRuns.id, runRow.id));
 
     return NextResponse.json({
-      ok: (job === "trade_reconcile" || job === "trade_monitor" || job === "trade_diagnostics") ? status === "ok" : true,
+      ok: (job === "aria" || job === "trade_reconcile" || job === "trade_monitor" || job === "trade_diagnostics") ? status === "ok" : true,
       job,
       status,
       durationMs: duration,
       steps,
       runId: runRow.id,
-    }, { status: (job === "trade_reconcile" || job === "trade_monitor" || job === "trade_diagnostics") && status !== "ok" ? 503 : 200 });
+    }, { status: (job === "aria" || job === "trade_reconcile" || job === "trade_monitor" || job === "trade_diagnostics") && status !== "ok" ? 503 : 200 });
   } catch (e: any) {
     const duration = Date.now() - started;
     const message = e?.message || String(e);

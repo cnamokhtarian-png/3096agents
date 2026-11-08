@@ -4,7 +4,7 @@ import {
   type ExchangeStatus,
 } from "@/lib/exchange";
 import { ENV } from "@/lib/env";
-import { protectedTradeBlocker } from "@/lib/trade-protection";
+import { protectedTradeReadiness } from "@/lib/trade-readiness";
 import { tradeProposalErrors } from "@/lib/trade-proposal";
 import { telegramConfigured } from "@/lib/telegram";
 
@@ -115,7 +115,8 @@ export async function preflightJobKind(
 
   switch (kind) {
     case "trade": {
-      blockers.push(protectedTradeBlocker());
+      const protection = await protectedTradeReadiness();
+      if (protection) blockers.push(protection);
       for (const label of tradeProposalErrors(payload)) {
         blockers.push({ code: "invalid_trade_proposal", label, missing: [], action: "پیشنهاد کامل و معتبر بسازید." });
       }
@@ -139,6 +140,10 @@ export async function preflightJobKind(
         });
       }
       exchange = opts.exchange ?? (await exchangeStatus());
+      if (exchange.exchange !== "tabdeal") blockers.push({
+        code: "tabdeal_required", label: "چرخه محافظت‌شده آریا فقط برای تبدیل فعال است",
+        missing: ["EXCHANGE_NAME=tabdeal"], action: "صرافی تبدیل را در تنظیمات انتخاب کنید.",
+      });
       if (!exchange.canExecuteOrders) {
         blockers.push(...exchange.blockers.map(blockerFromExchange));
       }

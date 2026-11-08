@@ -77,7 +77,7 @@ export async function reconcilePendingTabdealExits(limit = 3) {
     } catch (error) {
       // Store bounded error codes only. A failure is not a closed position.
       const code = error instanceof Error && /^[a-z0-9_]{1,80}$/.test(error.message) ? error.message : 'reconcile_failed';
-      await pool.query('UPDATE agentos.live_trade_positions SET last_checked_at = now(), last_error = $2 WHERE id = $1', [row.id, code]);
+      await pool.query('UPDATE agentos.live_trade_positions SET last_checked_at = now(), last_error = $2 WHERE id = $1', [row.id, code]).catch(()=>{});
       results.push({ positionId: row.id, ok: false, error: code });
     }
   }
