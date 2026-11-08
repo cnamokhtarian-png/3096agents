@@ -8,6 +8,7 @@ const ALLOWED = new Set([
   'GET /api/v1/account',
   'GET /r/api/v1/account',
   'GET /r/api/v1/order',
+  'GET /r/api/v1/allOrders',
   'GET /r/api/v1/myTrades',
   'POST /api/v1/order',
   'DELETE /api/v1/order',

@@ -5,6 +5,7 @@ import { eq, lt, and, sql } from "drizzle-orm";
 import { ENV } from "@/lib/env";
 import { refreshMarket } from "@/lib/market";
 import { monitorApprovedTabdealPositions } from "@/lib/exit-monitor";
+import { diagnoseLegacyTabdealOrders } from "@/lib/trade-diagnostics";
 import { sendPendingTradeCloseReports } from "@/lib/trade-close-report";
 import { reconcilePendingTabdealEntries } from "@/lib/reconcile-entry";
 import { reconcilePendingTabdealExits } from "@/lib/reconcile-exit";
@@ -80,6 +81,7 @@ async function run(req: NextRequest, jobParam: string) {
     "expire",
     "reports",
     "cleanup",
+    "trade_diagnostics",
     "trade_reconcile",
     "trade_monitor",
   ].includes(jobParam)
@@ -102,6 +104,11 @@ async function run(req: NextRequest, jobParam: string) {
   let status = "ok";
 
   try {
+    if (job === "trade_diagnostics") {
+      const diagnostics = await diagnoseLegacyTabdealOrders();
+      steps.tradeDiagnostics = diagnostics;
+      if (!diagnostics.ok) status = "partial";
+    }
     // Opt-in, reconciliation only. It does not monitor prices or submit sells.
     if (job === "trade_reconcile") {
       const entries = await reconcilePendingTabdealEntries();
@@ -235,13 +242,13 @@ async function run(req: NextRequest, jobParam: string) {
       .where(eq(cronRuns.id, runRow.id));
 
     return NextResponse.json({
-      ok: (job === "trade_reconcile" || job === "trade_monitor") ? status === "ok" : true,
+      ok: (job === "trade_reconcile" || job === "trade_monitor" || job === "trade_diagnostics") ? status === "ok" : true,
       job,
       status,
       durationMs: duration,
       steps,
       runId: runRow.id,
-    }, { status: (job === "trade_reconcile" || job === "trade_monitor") && status !== "ok" ? 503 : 200 });
+    }, { status: (job === "trade_reconcile" || job === "trade_monitor" || job === "trade_diagnostics") && status !== "ok" ? 503 : 200 });
   } catch (e: any) {
     const duration = Date.now() - started;
     const message = e?.message || String(e);

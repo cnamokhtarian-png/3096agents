@@ -607,6 +607,13 @@ export async function cancelTabdealOrder(symbol: string, clientOrderId: string) 
   return json;
 }
 
+/** Read-only history lookup for an earlier ambiguous request. */
+export async function findTabdealRecentOrders(symbol: string, startMs: number, endMs: number) {
+  if (!/^[A-Z0-9]{2,30}$/.test(symbol) || !Number.isSafeInteger(startMs) || !Number.isSafeInteger(endMs) || startMs < 0 || endMs <= startMs || endMs-startMs > 600000) throw new ExchangeError("محدوده استعلام نامعتبر است", "invalid_order_lookup");
+  const { json } = await signedRequest("GET", "/r/api/v1/allOrders", { symbol, startTime:startMs, endTime:endMs, limit:1000 }, { requireTradingFlag:false, exchangeOnly:"tabdeal" });
+  return json;
+}
+
 /** Fetch individual trades for one exchange order; incomplete pages are rejected. */
 export async function fetchTabdealOrderTrades(symbol: string, orderId: string, side: "BUY" | "SELL") {
   if (!/^[A-Z0-9]{2,30}$/.test(symbol) || !/^\d{1,30}$/.test(orderId)) throw new ExchangeError("نماد یا شناسه سفارش نامعتبر است", "invalid_order_lookup");
