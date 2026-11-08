@@ -593,6 +593,7 @@ export async function runAriaMarketScan(options?: { forceCardIfNonePending?: boo
     setups,
     best,
     proposalCreated,
+    warnings: [...errors, ...(availableUsdt === null ? [balanceNote] : [])],
   };
 }
 
@@ -677,7 +678,8 @@ export async function runBountyHunterScan() {
   }
 
   return {
-    ok: true,
+    ok: scan.ok && !scan.error,
+    error: scan.error,
     feedsChecked: scan.sourcesChecked.length,
     rawItems: scan.fetchedCount,
     rejectedScamOrNoise: rejectedCount,
@@ -870,16 +872,17 @@ export async function runFleetCycle(options?: {
   }
 
   const [aria, bounty, specialists] = await Promise.all([
-    runAriaMarketScan({ forceCardIfNonePending: options?.forceAriaCard ?? true }),
-    runBountyHunterScan(),
-    runSpecialistAgentsScan({ maxProposalsPerCycle: options?.maxSpecialistProposals ?? 1 }),
+    runAriaMarketScan({ forceCardIfNonePending: options?.forceAriaCard ?? true }).catch((e) => ({ ok: false as const, error: String(e?.message || e), setups: [] as TechnicalSetup[] })),
+    runBountyHunterScan().catch((e) => ({ ok: false as const, error: String(e?.message || e) })),
+    runSpecialistAgentsScan({ maxProposalsPerCycle: options?.maxSpecialistProposals ?? 1 }).catch((e) => ({ ok: false as const, error: String(e?.message || e), proposalsDispatched: 0, specialists: [] })),
   ]);
 
   const durationMs = Date.now() - startedAt;
+  const ok = aria.ok && bounty.ok && specialists.ok;
   await logCooActivity({
     agentName: COO_NAME,
     action: "تکمیل چرخه پایش هم‌زمان موتورهای ناوگان (A1، B7، A2-A6)",
-    status: "success",
+    status: ok ? "success" : "error",
     detail: `مدت چرخه: ${durationMs}ms • جفت‌ارزهای تحلیل‌شده آریا: ${aria.setups?.length ?? 0} • منابع بانتی بررسی‌شده: ${"feedsChecked" in bounty ? bounty.feedsChecked : 0} • پروپوزال‌های تخصصی ارسالی: ${specialists.proposalsDispatched}`,
     source: "coo_cycle",
     meta: {
@@ -890,7 +893,7 @@ export async function runFleetCycle(options?: {
   });
 
   return {
-    ok: true,
+    ok,
     durationMs,
     aria,
     bounty,

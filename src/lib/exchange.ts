@@ -1,3 +1,4 @@
+import { isAllowedSignedRequest } from "@/lib/exchange-request-policy";
 import { createHmac, randomUUID } from "crypto";
 import { db } from "@/db";
 import { settings } from "@/db/schema";
@@ -263,6 +264,27 @@ async function timedFetch(url: string, init: RequestInit = {}, timeoutMs = 9000)
   }
 }
 
+// Retries are limited to public read-only requests, never order placement.
+async function publicTimedFetch(url: string, timeoutMs: number) {
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      const response = await timedFetch(url, {}, timeoutMs);
+      if (attempt === 1 && (response.status === 429 || response.status >= 500)) {
+        console.warn(`[exchange] public request HTTP ${response.status}; retrying once`);
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        continue;
+      }
+      if (!response.ok) console.warn(`[exchange] public request HTTP ${response.status}`);
+      return response;
+    } catch (error) {
+      console.warn(`[exchange] public request failed (attempt ${attempt}): ${error instanceof Error ? error.message : "network error"}`);
+      if (attempt === 2) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+  }
+  throw new ExchangeError("اتصال عمومی به صرافی ناموفق بود", "exchange_unreachable");
+}
+
 /** قیمت عمومی یک یا چند نماد — Binance با فالبک OKX. */
 export async function fetchPublicPrices(symbols: string[]): Promise<PriceQuote[]> {
   const list = symbols.map((s) => s.toUpperCase());
@@ -271,7 +293,7 @@ export async function fetchPublicPrices(symbols: string[]): Promise<PriceQuote[]
   // ۱) Binance
   try {
     const q = encodeURIComponent(JSON.stringify(list));
-    const res = await timedFetch(`${publicBaseUrl()}/api/v3/ticker/24hr?symbols=${q}`, {}, 7000);
+    const res = await publicTimedFetch(`${publicBaseUrl()}/api/v3/ticker/24hr?symbols=${q}`, 7000);
     if (res.ok) {
       const arr: any[] = await res.json();
       if (Array.isArray(arr) && arr.length) {
@@ -293,9 +315,8 @@ export async function fetchPublicPrices(symbols: string[]): Promise<PriceQuote[]
     const out: PriceQuote[] = [];
     for (const sym of list) {
       const instId = sym.replace(/USDT$/, "-USDT");
-      const res = await timedFetch(
+      const res = await publicTimedFetch(
         `https://www.okx.com/api/v5/market/ticker?instId=${encodeURIComponent(instId)}`,
-        {},
         7000
       );
       if (!res.ok) continue;
@@ -330,9 +351,8 @@ export async function fetchKlines(
 
   // ۱) Binance
   try {
-    const res = await timedFetch(
+    const res = await publicTimedFetch(
       `${publicBaseUrl()}/api/v3/klines?symbol=${encodeURIComponent(sym)}&interval=${interval}&limit=${limit}`,
-      {},
       7500,
     );
     if (res.ok) {
@@ -357,9 +377,8 @@ export async function fetchKlines(
   try {
     const instId = sym.replace(/USDT$/, "-USDT");
     const bar = interval === "4h" ? "4H" : interval === "15m" ? "15m" : "1H";
-    const res = await timedFetch(
+    const res = await publicTimedFetch(
       `https://www.okx.com/api/v5/market/candles?instId=${encodeURIComponent(instId)}&bar=${bar}&limit=${limit}`,
-      {},
       7500,
     );
     if (res.ok) {
@@ -402,6 +421,9 @@ async function signedRequest(
   params: Record<string, string | number> = {},
   opts?: { requireTradingFlag?: boolean },
 ): Promise<{ json: any; exchange: "binance" | "tabdeal"; testnet: boolean }> {
+  if (!isAllowedSignedRequest(method, path)) {
+    throw new ExchangeError("درخواست امضاشده در فهرست مجاز نیست", "exchange_endpoint_forbidden");
+  }
   const cfg = await assertTradingAllowed(opts);
 
   const targets: Array<{
@@ -425,21 +447,16 @@ async function signedRequest(
       apiPath: path,
       testnet: cfg.testnet,
     });
-    // اگر در تنظیمات دیتابیس tabdeal هم ثبت شده باشد و کلید روی تست‌نت بایننس رد شد (-2015)، تبدیل را هم بیازماییم
-    if (!conf("EXCHANGE_BASE_URL")) {
-      targets.push({
-        exchange: "tabdeal",
-        host: TABDEAL_BASE,
-        apiPath: path.replace(/^\/api\/v3\//, "/api/v1/"),
-        testnet: false,
-      });
-    }
+
   }
 
   let lastErr: ExchangeError | null = null;
 
   for (let i = 0; i < targets.length; i++) {
     const t = targets[i];
+    if (!isAllowedSignedRequest(method, t.apiPath)) {
+      throw new ExchangeError("مقصد درخواست امضاشده در فهرست مجاز نیست", "exchange_endpoint_forbidden");
+    }
     const query = new URLSearchParams({
       ...Object.fromEntries(Object.entries(params).map(([k, v]) => [k, String(v)])),
       timestamp: String(Date.now()),
@@ -487,8 +504,11 @@ async function signedRequest(
 
 export async function getAccountBalances(assets = ["USDT"]) {
   const { json: acc } = await signedRequest("GET", "/api/v3/account", {}, { requireTradingFlag: false });
+  if (!Array.isArray(acc?.balances)) {
+    throw new ExchangeError("پاسخ حساب صرافی شامل فهرست موجودی معتبر نیست", "invalid_account_response");
+  }
   const wanted = new Set(assets.map((a) => a.toUpperCase()));
-  const balances = (acc?.balances || [])
+  const balances = acc.balances
     .filter((b: any) => wanted.has(String(b.asset).toUpperCase()))
     .map((b: any) => ({
       asset: b.asset,

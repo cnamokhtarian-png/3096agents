@@ -35,7 +35,6 @@ let cachedMtime = 0;
 export const CONFIG_PATH = path.join(process.cwd(), "config.json");
 
 function readConfigFile(): ConfigShape {
-  if (cached) return cached;
   try {
     if (!fs.existsSync(CONFIG_PATH)) return {};
     const stat = fs.statSync(CONFIG_PATH);
@@ -240,7 +239,7 @@ export function configInventory() {
         source: process.env[k]?.trim() ? "env" : CONFIG_PATHS[k] ? "config.json" : "unset",
         // فقط برای کلیدهای غیرمحرمانه مقدار نشان داده می‌شود
         preview:
-          k.includes("KEY") || k.includes("SECRET") || k.includes("PASSWORD") || k.includes("TOKEN")
+          k.includes("KEY") || k.includes("SECRET") || k.includes("PASSWORD") || k.includes("TOKEN") || k === "DATABASE_URL" || k === "DIRECT_URL"
             ? value
               ? `••••${value.slice(-4)}`
               : ""

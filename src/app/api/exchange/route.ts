@@ -194,7 +194,7 @@ export async function POST(req: NextRequest) {
       const test = await testExchangeConnection();
       const status = await exchangeStatus();
       return NextResponse.json({
-        ok: Boolean(test.prices?.length) && !test.accountError,
+        ok: Boolean(test.prices?.length) && Boolean(test.account) && !test.accountError,
         status,
         test,
       });

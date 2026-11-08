@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
+import ExchangeDetails from "@/components/ExchangeDetails";
 
 const fa = (n: any) => Number(n || 0).toLocaleString("fa-IR");
 const dt = (d: any) =>
@@ -24,6 +25,9 @@ export default function SystemPage() {
   const [busy, setBusy] = useState("");
   const [toast, setToast] = useState("");
   const [cronOut, setCronOut] = useState<any>(null);
+  const [exchangeTest, setExchangeTest] = useState<any>(null);
+  const [exchangeTestedAt, setExchangeTestedAt] = useState<string | null>(null);
+  const [wallet, setWallet] = useState<any>(null);
 
   const notify = (t: string) => {
     setToast(t);
@@ -35,6 +39,12 @@ export default function SystemPage() {
       const res = await fetch(`/api/system/status${test ? "?test=1" : ""}`, { cache: "no-store" });
       const d = await res.json();
       setData(d);
+      if (test) {
+        setExchangeTest(d?.exchange?.test ?? null);
+        setExchangeTestedAt(new Date().toISOString());
+        const walletResponse = await fetch("/api/wallet", { cache: "no-store" });
+        if (walletResponse.ok) setWallet((await walletResponse.json())?.masterWallet ?? null);
+      }
     } catch (e: any) {
       notify(`خطا در دریافت وضعیت: ${e?.message || e}`);
     } finally {
@@ -52,6 +62,10 @@ export default function SystemPage() {
           return;
         }
         load();
+        fetch("/api/wallet", { cache: "no-store" })
+          .then((r) => r.ok ? r.json() : null)
+          .then((d) => setWallet(d?.masterWallet ?? null))
+          .catch(() => setWallet(null));
         iv = setInterval(() => load(), 30000);
       })
       .catch(() => {
@@ -81,7 +95,7 @@ export default function SystemPage() {
     setBusy("exchange");
     try {
       await load(true);
-      notify("تست واقعی اتصال انجام شد");
+      notify("نتیجهٔ بررسی در بخش صرافی نمایش داده می‌شود");
     } finally {
       setBusy("");
     }
@@ -337,23 +351,7 @@ export default function SystemPage() {
                 <p className="mt-0.5 text-[9px] leading-4 text-slate-400">{data.ai.note}</p>
               </div>
             )}
-            {data?.exchange?.test && (
-              <div className="mt-2 rounded-xl bg-black/30 p-2 text-[10px]">
-                <p className="text-slate-400">تست واقعی:</p>
-                <pre className="mt-1 max-h-32 overflow-auto text-emerald-300" dir="ltr">
-                  {JSON.stringify(
-                    {
-                      price: data.exchange.test.prices?.[0]?.price ?? null,
-                      priceError: data.exchange.test.priceError,
-                      account: data.exchange.test.account?.balances ?? null,
-                      accountError: data.exchange.test.accountError,
-                    },
-                    null,
-                    1
-                  )}
-                </pre>
-              </div>
-            )}
+            <ExchangeDetails test={exchangeTest} testedAt={exchangeTestedAt} wallet={wallet} />
 
             <h2 className="mt-4 text-sm font-black">📩 تلگرام</h2>
             <p className="mt-1 text-[11px] text-slate-300">

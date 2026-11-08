@@ -13,6 +13,7 @@ import {
 import { recordAgentError } from "@/lib/agent-execution";
 import { currentUser } from "@/lib/auth";
 import { generateCooExecutiveReport, runFleetCycle } from "@/lib/coo";
+import { escapeHtml, notifyAdmin } from "@/lib/telegram";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -80,10 +81,17 @@ async function run(req: NextRequest, jobParam: string) {
     : "full";
 
   const started = Date.now();
-  const [runRow] = await db
-    .insert(cronRuns)
-    .values({ job, status: "running" })
-    .returning();
+  let runRow: typeof cronRuns.$inferSelect;
+  try {
+    [runRow] = await db.insert(cronRuns).values({ job, status: "running" }).returning();
+  } catch (error: unknown) {
+    // Database errors can contain connection credentials; expose only an error code.
+    const cause = (error as { cause?: { code?: unknown } })?.cause;
+    const code = typeof cause?.code === "string" && /^[A-Z0-9_]{1,32}$/.test(cause.code)
+      ? cause.code : "DATABASE_UNAVAILABLE";
+    console.error(`[cron] database unavailable: ${code}`);
+    return NextResponse.json({ ok: false, job, error: `اتصال دیتابیس یا ثبت اجرای کرون ناموفق بود (${code})` }, { status: 503 });
+  }
   const steps: Record<string, unknown> = {};
   let status = "ok";
 
@@ -106,13 +114,33 @@ async function run(req: NextRequest, jobParam: string) {
         forceAriaCard: false,
         maxSpecialistProposals: 1,
       });
+      if (!fleet.ok) status = "partial";
       steps.fleet = {
         ok: fleet.ok,
         durationMs: fleet.durationMs,
         ariaSetups: fleet.aria.setups?.length ?? 0,
         bountyFeeds: "feedsChecked" in fleet.bounty ? fleet.bounty.feedsChecked : 0,
         specialistProposals: fleet.specialists.proposalsDispatched,
+        aria: fleet.aria,
+        bounty: fleet.bounty,
+        specialists: fleet.specialists,
       };
+      const aria = fleet.aria;
+      const bounty = fleet.bounty;
+      const report = [
+        `چرخه زنده ناوگان: ${fleet.ok ? "تکمیل شد" : "با خطا"}`,
+        `آریا: ${aria.ok ? `${aria.setups.length} تحلیل: ${aria.setups.map((s) => `${s.symbol} $${s.entryPrice}`).join("، ")}` : ("error" in aria ? aria.error : aria.reason)}`,
+        ...("warnings" in aria ? (aria.warnings ?? []) : []),
+        `B7: ${"rawItems" in bounty ? `${bounty.rawItems} آیتم، ${bounty.candidatesFound} نامزد، ${bounty.createdCards?.length ?? 0} کارت` : "اسکن ناموفق"}`,
+        ...("error" in bounty && bounty.error ? [`خطای B7: ${bounty.error}`] : []),
+        ...("reason" in bounty ? [bounty.reason] : []),
+        `متخصصان: ${fleet.specialists.proposalsDispatched} پیشنهاد`,
+        ...("error" in fleet.specialists ? [`خطای متخصصان: ${fleet.specialists.error}`] : []),
+        "نامزدها تضمین امنیت یا پاداش نیستند؛ اقدامات حساس نیازمند تأیید مدیرعامل‌اند.",
+      ].join("\n");
+      const notification = await notifyAdmin(escapeHtml(report.slice(0, 3500)));
+      steps.fleetTelegram = notification.ok ? { ok: true } : { ok: false, error: notification.description || notification.error };
+      if (!notification.ok) status = "partial";
     }
 
     if (job === "queue" || job === "full") {
