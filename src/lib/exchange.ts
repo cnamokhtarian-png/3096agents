@@ -1,3 +1,9 @@
+import { parseTabdealTrades } from "@/lib/tabdeal-fills";
+import { normalizeAccountBalances, parseOrderAcknowledgement } from "@/lib/exchange-response";
+import { validateTabdealSpotOrder } from "@/lib/tabdeal-order-input";
+import { parseTabdealMarket } from "@/lib/tabdeal-market";
+import { parseTabdealTopOfBook } from "@/lib/position-monitor";
+import { validateTabdealSellOco, type TabdealOcoPlan, type TabdealOcoFilters } from "@/lib/tabdeal-oco";
 import { isAllowedSignedRequest } from "@/lib/exchange-request-policy";
 import { createHmac, randomUUID } from "crypto";
 import { db } from "@/db";
@@ -416,15 +422,18 @@ function signWithSecret(query: string, secret: string) {
 }
 
 async function signedRequest(
-  method: "GET" | "POST",
+  method: "GET" | "POST" | "DELETE",
   path: string,
   params: Record<string, string | number> = {},
-  opts?: { requireTradingFlag?: boolean },
+  opts?: { requireTradingFlag?: boolean; exchangeOnly?: "tabdeal" },
 ): Promise<{ json: any; exchange: "binance" | "tabdeal"; testnet: boolean }> {
   if (!isAllowedSignedRequest(method, path)) {
     throw new ExchangeError("درخواست امضاشده در فهرست مجاز نیست", "exchange_endpoint_forbidden");
   }
   const cfg = await assertTradingAllowed(opts);
+  if (opts?.exchangeOnly && cfg.exchangeName !== opts.exchangeOnly) {
+    throw new ExchangeError("این عملیات فقط برای تبدیل پشتیبانی می‌شود", "wrong_exchange");
+  }
 
   const targets: Array<{
     exchange: "binance" | "tabdeal";
@@ -437,7 +446,7 @@ async function signedRequest(
     targets.push({
       exchange: "tabdeal",
       host: conf("EXCHANGE_BASE_URL").replace(/\/$/, "") || TABDEAL_BASE,
-      apiPath: path.replace(/^\/api\/v3\//, "/api/v1/"),
+      apiPath: method === "GET" && path === "/api/v3/account" ? "/r/api/v1/account" : path.replace(/^\/api\/v3\//, "/api/v1/"),
       testnet: false,
     });
   } else {
@@ -481,7 +490,7 @@ async function signedRequest(
       }
       const msg = json?.msg || json?.message || `HTTP ${res.status}`;
       lastErr = new ExchangeError(
-        `صرافی (${t.exchange}) خطا برگرداند: ${msg}`,
+        `صرافی (${t.exchange}) درخواست را رد کرد (HTTP ${res.status}): ${msg}`,
         "exchange_rejected",
         { exchange: t.exchange, status: res.status, code: json?.code, msg },
       );
@@ -504,29 +513,23 @@ async function signedRequest(
 
 export async function getAccountBalances(assets = ["USDT"]) {
   const { json: acc } = await signedRequest("GET", "/api/v3/account", {}, { requireTradingFlag: false });
-  if (!Array.isArray(acc?.balances)) {
-    throw new ExchangeError("پاسخ حساب صرافی شامل فهرست موجودی معتبر نیست", "invalid_account_response");
+  try {
+    return normalizeAccountBalances(acc, assets);
+  } catch (error) {
+    throw new ExchangeError("پاسخ حساب صرافی شامل موجودی معتبر نیست", error instanceof Error ? error.message : "invalid_account_response");
   }
-  const wanted = new Set(assets.map((a) => a.toUpperCase()));
-  const balances = acc.balances
-    .filter((b: any) => wanted.has(String(b.asset).toUpperCase()))
-    .map((b: any) => ({
-      asset: b.asset,
-      free: Number(b.free),
-      locked: Number(b.locked),
-      total: Number(b.free) + Number(b.locked),
-    }));
-  return { canTrade: Boolean(acc?.canTrade ?? true), balances, accountType: acc?.accountType ?? null };
 }
 
 export type PlaceOrderInput = {
   symbol: string;
   side: "BUY" | "SELL";
   type?: "MARKET" | "LIMIT";
-  quantity?: number;
+  quantity?: number | string;
   quoteOrderQty?: number;
-  price?: number;
+  price?: number | string;
   testnet?: boolean;
+  clientOrderId?: string;
+  exchangeOnly?: "tabdeal";
 };
 
 /**
@@ -534,12 +537,21 @@ export type PlaceOrderInput = {
  * مستقیماً به AGENT_TRADING_ENABLED متصل است؛ با فعال شدن آن در Vercel، سفارش پس از تأیید مدیرعامل صادر می‌شود.
  */
 export async function placeRealOrder(input: PlaceOrderInput): Promise<ExchangeOrderResult> {
-  await assertTradingAllowed({ requireTradingFlag: true });
-  const symbol = input.symbol.toUpperCase().replace(/[^A-Z0-9]/g, "");
-  if (!symbol) throw new ExchangeError("نماد معاملاتی نامعتبر است", "invalid_symbol");
+  const cfg = await assertTradingAllowed({ requireTradingFlag: true });
+  const symbol = input.symbol.toUpperCase();
+  if (!/^[A-Z0-9]{2,30}$/.test(symbol)) throw new ExchangeError("نماد معاملاتی نامعتبر است", "invalid_symbol");
+  if (input.exchangeOnly && cfg.exchangeName !== input.exchangeOnly) throw new ExchangeError("این عملیات فقط برای تبدیل پشتیبانی می‌شود", "wrong_exchange");
+  if (cfg.exchangeName === "tabdeal") {
+    try {
+      validateTabdealSpotOrder({ symbol, side: input.side, type: input.type || "MARKET", quantity: input.quantity == null ? undefined : String(input.quantity), quoteOrderQty: input.quoteOrderQty, price: input.price });
+    } catch (error) {
+      throw new ExchangeError("پارامترهای سفارش با API نقدی تبدیل سازگار نیست", error instanceof Error ? error.message : "invalid_tabdeal_order");
+    }
+  }
 
   const type = input.type || "MARKET";
-  const clientOrderId = `ag${Date.now().toString(36)}${randomUUID().slice(0, 6)}`;
+  const clientOrderId = input.clientOrderId || `ag${Date.now().toString(36)}${randomUUID().slice(0, 6)}`;
+  if (!/^[A-Za-z0-9_-]{1,32}$/.test(clientOrderId)) throw new ExchangeError("شناسه سفارش نامعتبر است", "invalid_client_id");
 
   const params: Record<string, string | number> = {
     symbol,
@@ -547,35 +559,113 @@ export async function placeRealOrder(input: PlaceOrderInput): Promise<ExchangeOr
     type,
     newClientOrderId: clientOrderId,
   };
+  const quantityText = input.quantity == null ? "" : String(input.quantity);
+  const hasQuantity = /^\d+(?:\.\d+)?$/.test(quantityText) && /[1-9]/.test(quantityText) && quantityText.length <= 64;
   if (type === "MARKET") {
     if (input.quoteOrderQty && input.quoteOrderQty > 0) params.quoteOrderQty = input.quoteOrderQty;
-    else if (input.quantity && input.quantity > 0) params.quantity = input.quantity;
+    else if (hasQuantity) params.quantity = quantityText;
     else throw new ExchangeError("مقدار سفارش مشخص نشده است", "missing_quantity");
   } else {
-    if (!input.quantity || input.quantity <= 0) throw new ExchangeError("مقدار سفارش مشخص نشده است", "missing_quantity");
-    if (!input.price || input.price <= 0) throw new ExchangeError("قیمت سفارش مشخص نشده است", "missing_price");
-    params.quantity = input.quantity;
+    if (!hasQuantity) throw new ExchangeError("مقدار سفارش مشخص نشده است", "missing_quantity");
+    if (!input.price || !Number.isFinite(Number(input.price)) || Number(input.price) <= 0) throw new ExchangeError("قیمت سفارش مشخص نشده است", "missing_price");
+    params.quantity = quantityText;
     params.price = input.price;
     params.timeInForce = "GTC";
   }
 
   const { json, exchange, testnet } = await signedRequest("POST", "/api/v3/order", params, {
     requireTradingFlag: true,
+    exchangeOnly: input.exchangeOnly,
   });
+  let acknowledgement: ReturnType<typeof parseOrderAcknowledgement>;
+  try { acknowledgement = parseOrderAcknowledgement(json); }
+  catch { throw new ExchangeError("پاسخ سفارش نامشخص است؛ قبل از تلاش مجدد وضعیت شناسه سفارش را بررسی کنید", "order_response_ambiguous", { clientOrderId }); }
   return {
     exchange,
     testnet,
     symbol,
     side: input.side,
-    status: String(json?.status || "FILLED"),
-    orderId: String(json?.orderId || json?.id || clientOrderId),
+    ...acknowledgement,
     clientOrderId,
-    executedQty: String(json?.executedQty ?? input.quantity ?? "0"),
-    cummulativeQuoteQty: String(json?.cummulativeQuoteQty ?? input.quoteOrderQty ?? "0"),
     fills: json?.fills,
     raw: json,
     simulated: false,
   };
+}
+
+/** Read-only reconciliation by a client ID persisted before submission. */
+export async function findTabdealOrder(symbol: string, clientOrderId: string) {
+  if (!/^[A-Z0-9]{2,30}$/.test(symbol) || !/^[A-Za-z0-9_-]{1,32}$/.test(clientOrderId)) throw new ExchangeError("نماد یا شناسه سفارش نامعتبر است", "invalid_order_lookup");
+  const { json } = await signedRequest("GET", "/r/api/v1/order", { symbol, origClientOrderId: clientOrderId }, { requireTradingFlag: false, exchangeOnly: "tabdeal" });
+  return json;
+}
+
+/** Cancel one previously persisted Tabdeal order; callers must re-query status. */
+export async function cancelTabdealOrder(symbol: string, clientOrderId: string) {
+  if (!/^[A-Z0-9]{2,30}$/.test(symbol) || !/^[A-Za-z0-9_-]{1,32}$/.test(clientOrderId)) throw new ExchangeError("نماد یا شناسه سفارش نامعتبر است", "invalid_order_lookup");
+  const { json } = await signedRequest("DELETE", "/api/v1/order", { symbol, origClientOrderId: clientOrderId }, { requireTradingFlag: true, exchangeOnly: "tabdeal" });
+  return json;
+}
+
+/** Read-only history lookup for an earlier ambiguous request. */
+export async function findTabdealRecentOrders(symbol: string, startMs: number, endMs: number) {
+  if (!/^[A-Z0-9]{2,30}$/.test(symbol) || !Number.isSafeInteger(startMs) || !Number.isSafeInteger(endMs) || startMs < 0 || endMs <= startMs || endMs-startMs > 600000) throw new ExchangeError("محدوده استعلام نامعتبر است", "invalid_order_lookup");
+  const { json } = await signedRequest("GET", "/r/api/v1/allOrders", { symbol, startTime:startMs, endTime:endMs, limit:1000 }, { requireTradingFlag:false, exchangeOnly:"tabdeal" });
+  return json;
+}
+
+/** Fetch individual trades for one exchange order; incomplete pages are rejected. */
+export async function fetchTabdealOrderTrades(symbol: string, orderId: string, side: "BUY" | "SELL") {
+  if (!/^[A-Z0-9]{2,30}$/.test(symbol) || !/^\d{1,30}$/.test(orderId)) throw new ExchangeError("نماد یا شناسه سفارش نامعتبر است", "invalid_order_lookup");
+  const { json } = await signedRequest("GET", "/r/api/v1/myTrades", { symbol, orderId, limit: 1000 }, { requireTradingFlag: false, exchangeOnly: "tabdeal" });
+  if (!Array.isArray(json) || json.length >= 1000) throw new ExchangeError("فهرست اجراهای صرافی ناقص یا نامعتبر است", "trade_history_incomplete");
+  return parseTabdealTrades(json, { symbol, orderId, side });
+}
+
+/** Live exchange-provided symbol limits. Does not place an order. */
+export async function fetchTabdealMarketRules(symbol: string) {
+  if (!/^[A-Z0-9]{2,30}$/.test(symbol)) throw new ExchangeError("نماد نامعتبر است", "invalid_symbol");
+  const response = await publicTimedFetch(`${TABDEAL_BASE}/r/api/v1/exchangeInfo?symbol=${encodeURIComponent(symbol)}`, 7000);
+  if (!response.ok) throw new ExchangeError(`دریافت مشخصات بازار ناموفق: HTTP ${response.status}`, "tabdeal_market_unavailable");
+  return parseTabdealMarket(await response.json(), symbol);
+}
+
+/** Read-only Tabdeal book. Receipt time is not an exchange timestamp. */
+export async function fetchTabdealTopOfBook(symbol: string) {
+  if (!/^[A-Z0-9]{2,30}$/.test(symbol)) throw new ExchangeError("نماد نامعتبر است", "invalid_symbol");
+  const requestStartedAt = Date.now();
+  const response = await publicTimedFetch(`${TABDEAL_BASE}/r/api/v1/depth?symbol=${encodeURIComponent(symbol)}&limit=1`, 7000);
+  if (!response.ok) throw new ExchangeError(`دریافت دفتر سفارش تبدیل ناموفق بود: HTTP ${response.status}`, "tabdeal_book_unavailable");
+  const book = parseTabdealTopOfBook(await response.json());
+  return { ...book, requestStartedAt, receivedAt: Date.now(), source: "tabdeal" as const };
+}
+
+/** Standalone exchange primitive. Not yet wired to trade execution. */
+export async function submitTabdealSellOco(plan: TabdealOcoPlan, filters: TabdealOcoFilters) {
+  validateTabdealSellOco(plan, filters);
+  const { json } = await signedRequest("POST", "/api/v1/order/oco", {
+    symbol: plan.symbol,
+    side: "SELL",
+    quantity: plan.quantity,
+    price: plan.price,
+    stopPrice: plan.stopPrice,
+    stopLimitPrice: plan.stopLimitPrice,
+    listClientOrderId: plan.listClientOrderId,
+    limitClientOrderId: plan.limitClientOrderId,
+    stopClientOrderId: plan.stopClientOrderId,
+  }, { requireTradingFlag: true, exchangeOnly: "tabdeal" });
+  // A 2xx without an order list ID is ambiguous, not evidence of protection.
+  if (json?.orderListId == null || !["EXECUTING", "ALL_DONE"].includes(String(json.listOrderStatus))) {
+    throw new ExchangeError("پاسخ OCO نامشخص است؛ وضعیت را با شناسه مشتری بررسی کنید", "oco_response_ambiguous");
+  }
+  return json;
+}
+
+/** Lookup by caller-provided, persisted ID after an ambiguous OCO submission. */
+export async function findTabdealOco(listClientOrderId: string) {
+  if (!/^[A-Za-z0-9_-]{1,32}$/.test(listClientOrderId)) throw new ExchangeError("شناسه OCO نامعتبر است", "invalid_client_id");
+  const { json } = await signedRequest("GET", "/r/api/v1/orderList", { origClientOrderId: listClientOrderId }, { requireTradingFlag: false, exchangeOnly: "tabdeal" });
+  return json;
 }
 
 /** تست اتصال واقعی: قیمت + (اگر کلید باشد) موجودی. */

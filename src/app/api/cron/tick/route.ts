@@ -4,6 +4,11 @@ import { cronRuns, systemEvents, transactions } from "@/db/schema";
 import { eq, lt, and, sql } from "drizzle-orm";
 import { ENV } from "@/lib/env";
 import { refreshMarket } from "@/lib/market";
+import { monitorApprovedTabdealPositions } from "@/lib/exit-monitor";
+import { diagnoseLegacyTabdealOrders } from "@/lib/trade-diagnostics";
+import { sendPendingTradeCloseReports } from "@/lib/trade-close-report";
+import { reconcilePendingTabdealEntries } from "@/lib/reconcile-entry";
+import { reconcilePendingTabdealExits } from "@/lib/reconcile-exit";
 import {
   expireStaleApprovals,
   remindPendingApprovals,
@@ -76,6 +81,9 @@ async function run(req: NextRequest, jobParam: string) {
     "expire",
     "reports",
     "cleanup",
+    "trade_diagnostics",
+    "trade_reconcile",
+    "trade_monitor",
   ].includes(jobParam)
     ? jobParam
     : "full";
@@ -96,6 +104,34 @@ async function run(req: NextRequest, jobParam: string) {
   let status = "ok";
 
   try {
+    if (job === "trade_diagnostics") {
+      const diagnostics = await diagnoseLegacyTabdealOrders();
+      steps.tradeDiagnostics = diagnostics;
+      if (!diagnostics.ok) status = "partial";
+    }
+    // Opt-in, reconciliation only. It does not monitor prices or submit sells.
+    if (job === "trade_reconcile") {
+      const entries = await reconcilePendingTabdealEntries();
+      const result = await reconcilePendingTabdealExits();
+      steps.entryReconcile = entries;
+      steps.tradeReconcile = result;
+      const reports = await sendPendingTradeCloseReports();
+      steps.tradeCloseReports = reports;
+      if (!result.ok || !entries.ok || !reports.ok) status = "partial";
+    }
+    // The existing five-minute full endpoint can run the lifecycle once the
+    // migrations and end-to-end checks are complete and it is explicitly enabled.
+    if (job === "trade_monitor" || (job === "full" && process.env.TRADE_LIFECYCLE_ENABLED === "true")) {
+      const entries = await reconcilePendingTabdealEntries();
+      const monitored = await monitorApprovedTabdealPositions();
+      const reconciled = await reconcilePendingTabdealExits();
+      steps.entryReconcile = entries;
+      steps.tradeMonitor = monitored;
+      steps.tradeReconcile = reconciled;
+      const reports = await sendPendingTradeCloseReports();
+      steps.tradeCloseReports = reports;
+      if (!entries.ok || !monitored.ok || !reconciled.ok || !reports.ok) status = "partial";
+    }
     if (job === "market" || job === "full") {
       const r = await refreshMarket();
       steps.market = r.ok
@@ -206,13 +242,13 @@ async function run(req: NextRequest, jobParam: string) {
       .where(eq(cronRuns.id, runRow.id));
 
     return NextResponse.json({
-      ok: true,
+      ok: (job === "trade_reconcile" || job === "trade_monitor" || job === "trade_diagnostics") ? status === "ok" : true,
       job,
       status,
       durationMs: duration,
       steps,
       runId: runRow.id,
-    });
+    }, { status: (job === "trade_reconcile" || job === "trade_monitor" || job === "trade_diagnostics") && status !== "ok" ? 503 : 200 });
   } catch (e: any) {
     const duration = Date.now() - started;
     const message = e?.message || String(e);

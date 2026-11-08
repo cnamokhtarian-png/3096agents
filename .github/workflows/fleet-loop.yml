@@ -27,6 +27,7 @@ on:
           - fleet
           - market
           - queue
+          - trade_diagnostics
 
 permissions: {}
 
