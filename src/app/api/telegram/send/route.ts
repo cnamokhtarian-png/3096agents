@@ -39,13 +39,18 @@ export async function POST(req: NextRequest) {
       const b = await req.json().catch(() => ({}));
       const action = String(b?.action || "message");
 
+      // این دو عملیات از پنل به‌صورت دستی صدا زده می‌شوند → periodic:false
+      // (حتی در حالت «دستی» هم مجاز و مورد انتظارند).
       if (action === "daily_reports") {
-        const result = await sendDailyReports();
+        const result = await sendDailyReports({ periodic: false });
         return NextResponse.json({ ok: true, ...result });
       }
 
       if (action === "coo_report") {
-        const result = await generateCooExecutiveReport({ sendTelegram: true });
+        const result = await generateCooExecutiveReport({
+          sendTelegram: true,
+          periodic: false,
+        });
         return NextResponse.json(result);
       }
 

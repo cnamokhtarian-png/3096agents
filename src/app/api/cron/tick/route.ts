@@ -19,6 +19,7 @@ import { recordAgentError } from "@/lib/agent-execution";
 import { currentUser } from "@/lib/auth";
 import { generateCooExecutiveReport, runFleetCycle } from "@/lib/coo";
 import { escapeHtml, notifyAdmin } from "@/lib/telegram";
+import { allowReportSend } from "@/lib/report-schedule";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -32,7 +33,8 @@ export const maxDuration = 60;
  *   queue     → کارهای صف بدون نیاز به تأیید را اجرا می‌کند
  *   approvals → یادآوری درخواست‌های تأیید بی‌پاسخ در تلگرام
  *   expire    → منقضی کردن تأییدهای قدیمی
- *   reports   → گزارش روزانه هر کارمند را به تلگرام می‌فرستد
+ *   reports   → فقط اگر حالت گزارش «خودکار» باشد؛ در حالت «دستی» (پیش‌فرض)
+ *               هیچ گزارشی ارسال نمی‌شود و فقط درخواست دستی مدیرعامل معتبر است
  *   cleanup   → رویدادهای قدیمی سیستم را پاک می‌کند
  */
 
@@ -174,9 +176,18 @@ async function run(req: NextRequest, jobParam: string) {
         ...("error" in fleet.specialists ? [`خطای متخصصان: ${fleet.specialists.error}`] : []),
         "نامزدها تضمین امنیت یا پاداش نیستند؛ اقدامات حساس نیازمند تأیید مدیرعامل‌اند.",
       ].join("\n");
-      const notification = await notifyAdmin(escapeHtml(report.slice(0, 3500)));
-      steps.fleetTelegram = notification.ok ? { ok: true } : { ok: false, error: notification.description || notification.error };
-      if (!notification.ok) status = "partial";
+      // گزارش چرخه فقط در حالت «خودکار» ارسال می‌شود؛ در حالت «دستی» (پیش‌فرض)
+      // چرخه بی‌صدا اجرا می‌شود و مدیرعامل هر وقت خواست خودش گزارش می‌گیرد.
+      const reportGate = await allowReportSend({ periodic: true });
+      if (!reportGate.send) {
+        steps.fleetTelegram = { ok: true, skipped: reportGate.reason, mode: reportGate.mode };
+      } else {
+        const notification = await notifyAdmin(escapeHtml(report.slice(0, 3500)));
+        steps.fleetTelegram = notification.ok
+          ? { ok: true, mode: reportGate.mode }
+          : { ok: false, error: notification.description || notification.error };
+        if (!notification.ok) status = "partial";
+      }
     }
 
     if (job === "queue" || job === "full") {
@@ -194,17 +205,29 @@ async function run(req: NextRequest, jobParam: string) {
     }
 
     if (job === "reports") {
-      const [reports, coo] = await Promise.all([
-        sendDailyReports(),
-        generateCooExecutiveReport({ sendTelegram: true }),
-      ]);
-      steps.reports = reports;
-      steps.cooReport = {
-        ok: coo.ok,
-        telegramSent: Boolean(coo.telegram?.ok),
-        confirmedIncomeUsdt: coo.summary.company.confirmedIncomeUsdt,
-      };
-      if (reports.errors.length) status = "partial";
+      // گزارش دوره‌ای فقط در حالت «خودکار» اجرا می‌شود. حالت پیش‌فرض «دستی» است
+      // تا کرون هیچ گزارش خودکاری به تلگرام نفرستد.
+      const reportGate = await allowReportSend({ periodic: true });
+      if (!reportGate.send) {
+        steps.reports = {
+          sent: 0,
+          skipped: reportGate.reason,
+          mode: reportGate.mode,
+          note: "گزارش دوره‌ای خاموش است؛ گزارش فقط با درخواست دستی از پنل/ربات ارسال می‌شود.",
+        };
+      } else {
+        const [reports, coo] = await Promise.all([
+          sendDailyReports(),
+          generateCooExecutiveReport({ sendTelegram: true, periodic: true }),
+        ]);
+        steps.reports = reports;
+        steps.cooReport = {
+          ok: coo.ok,
+          telegramSent: Boolean(coo.telegram?.ok),
+          confirmedIncomeUsdt: coo.summary.company.confirmedIncomeUsdt,
+        };
+        if (reports.errors.length) status = "partial";
+      }
     }
 
     if (job === "cleanup" || job === "full") {
