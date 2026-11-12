@@ -32,6 +32,7 @@ import { tradeProposalErrors } from "@/lib/trade-proposal";
 import { scanBountyFeeds } from "@/lib/bounty";
 import { createJob } from "@/lib/jobs";
 import { escapeHtml, notifyAdmin, telegramConfigured } from "@/lib/telegram";
+import { allowReportSend } from "@/lib/report-schedule";
 import { activeGeminiModel, generateGeminiText, geminiConfigured } from "@/lib/ai";
 
 export const COO_NAME = "RNAI · مدیر ارشد اجرایی (COO)";
@@ -1388,6 +1389,12 @@ export async function buildCooExecutiveSummary(): Promise<CooExecutiveSummary> {
  */
 export async function generateCooExecutiveReport(options?: {
   sendTelegram?: boolean;
+  /**
+   * true (پیش‌فرض) یعنی این گزارش از مسیر زمان‌بندی‌شده آمده است و فقط در
+   * حالت «خودکار» ارسال می‌شود. درخواست دستی مدیرعامل باید periodic:false
+   * بفرستد تا حتی در حالت «دستی» هم ارسال شود.
+   */
+  periodic?: boolean;
 }) {
   const summary = await buildCooExecutiveSummary();
 
@@ -1418,9 +1425,16 @@ export async function generateCooExecutiveReport(options?: {
     }),
   ]);
 
+  const gate = await allowReportSend({ periodic: options?.periodic !== false });
+
   let telegramResult: { ok: boolean; messageId?: number; error?: string } | null =
     null;
-  if (options?.sendTelegram !== false && telegramConfigured() && ENV.telegramAdminChat()) {
+  if (
+    options?.sendTelegram !== false &&
+    gate.send &&
+    telegramConfigured() &&
+    ENV.telegramAdminChat()
+  ) {
     const res = await notifyAdmin(summary.telegramHtml);
     telegramResult = {
       ok: res.ok,
@@ -1433,6 +1447,8 @@ export async function generateCooExecutiveReport(options?: {
     ok: true,
     summary,
     telegram: telegramResult,
+    telegramSkipped: gate.send ? undefined : gate.reason,
+    reportMode: gate.mode,
   };
 }
 
@@ -1453,6 +1469,8 @@ export async function executeCooStartupDirective(options?: {
   });
   const report = await generateCooExecutiveReport({
     sendTelegram: options?.sendTelegramReport ?? true,
+    // فرمان استارت‌آپ همیشه دستی است؛ در حالت «دستی» هم گزارشش ارسال می‌شود.
+    periodic: false,
   });
 
   await db.insert(systemEvents).values({

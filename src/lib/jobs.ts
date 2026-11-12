@@ -25,6 +25,7 @@ import {
 } from "@/lib/telegram";
 import { buildAgentFacts } from "@/lib/report";
 import { conf } from "@/lib/config";
+import { allowReportSend } from "@/lib/report-schedule";
 import {
   approvalVerdict,
   preflightJobKind,
@@ -755,15 +756,32 @@ export async function remindPendingApprovals(olderThanMinutes = 45, windowMinute
   return { sent, candidates: rows.length };
 }
 
-/** تولید گزارش روزانه‌ی همه‌ی کارمندان و ارسال به تلگرام (کرون). */
-export async function sendDailyReports() {
+/**
+ * تولید گزارش روزانه‌ی همه‌ی کارمندان و ارسال به تلگرام.
+ *
+ * ⚠️ پیش‌فرض «دوره‌ای» است: اگر حالت گزارش‌دهی «دستی» باشد (پیش‌فرضِ سیستم)
+ * هیچ گزارشی ارسال نمی‌شود. برای ارسال درخواستیِ مدیرعامل باید صریحاً
+ * `{ periodic: false }` پاس داده شود (اندپوینت /api/reports همین کار را می‌کند).
+ */
+export async function sendDailyReports(opts: { periodic?: boolean; useAi?: boolean } = {}) {
+  const gate = await allowReportSend({ periodic: opts.periodic !== false });
+  if (!gate.send) {
+    return {
+      sent: 0,
+      agents: 0,
+      errors: [] as string[],
+      skipped: gate.reason,
+      mode: gate.mode,
+    };
+  }
+
   const all = await db.select().from(agents);
   let sent = 0;
   const errors: string[] = [];
   for (const agent of all) {
     if (agent.status !== "active") continue;
     try {
-      const report = await generateAgentReport(agent.id, { useAi: true });
+      const report = await generateAgentReport(agent.id, { useAi: opts.useAi !== false });
       if (!report.ok) {
         errors.push(`${agent.name}: ${report.error}`);
         continue;
@@ -779,8 +797,11 @@ export async function sendDailyReports() {
         agentId: agent.id,
         agentName: agent.name,
         kind: "status_report",
-        title: "گزارش روزانه خودکار",
-        detail: "ساخته‌شده توسط Vercel Cron",
+        title: opts.periodic === false ? "گزارش درخواستی مدیرعامل" : "گزارش روزانه خودکار",
+        detail:
+          opts.periodic === false
+            ? "ارسال دستی از پنل/API (گزارش دوره‌ای خاموش است)"
+            : "ساخته‌شده توسط Vercel Cron",
         payload: {},
         status: "succeeded",
         requiresApproval: false,

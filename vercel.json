@@ -13,16 +13,15 @@
     },
     "src/app/api/telegram/webhook/route.ts": {
       "maxDuration": 60
+    },
+    "src/app/api/reports/route.ts": {
+      "maxDuration": 120
     }
   },
   "crons": [
     {
       "path": "/api/cron/tick?job=full",
       "schedule": "0 6 * * *"
-    },
-    {
-      "path": "/api/cron/tick?job=reports",
-      "schedule": "30 6 * * *"
     }
   ]
 }

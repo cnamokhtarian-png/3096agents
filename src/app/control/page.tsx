@@ -76,6 +76,8 @@ export default function Control() {
   const [toast, setToast] = useState("");
   const [busy, setBusy] = useState("");
   const [dept, setDept] = useState("all");
+  // حالت گزارش تلگرام: «دستی» یعنی هیچ گزارش دوره‌ای ارسال نمی‌شود.
+  const [reportState, setReportState] = useState<any>(null);
 
   // پروژه‌ها
   const [q, setQ] = useState("");
@@ -157,6 +159,10 @@ export default function Control() {
     fetch("/api/exchange")
       .then((r) => r.json())
       .then((d) => d?.ok && setExInfo(d))
+      .catch(() => {});
+    fetch("/api/reports", { cache: "no-store" })
+      .then((r) => r.json())
+      .then((d) => d?.ok && setReportState(d))
       .catch(() => {});
     setProjects(Array.isArray(p) ? p : []);
     setTasks(Array.isArray(t) ? t : []);
@@ -505,15 +511,43 @@ export default function Control() {
     }
   }
 
-  async function sendTelegramReport() {
-    setBusy("tg");
+  /**
+   * گزارش در لحظه — هر وقت خودتان خواستید (اکشن دستی، مستقل از حالت دوره‌ای).
+   * kind: "coo" | "daily_reports" | "all"
+   */
+  async function sendTelegramReport(kind: "coo" | "daily_reports" | "all" = "coo") {
+    setBusy(`tg-${kind}`);
     try {
-      const d = await api("/api/coo", "POST", { action: "executive_report", sendTelegram: true });
-      notify(
-        d?.telegram?.ok
-          ? "گزارش جامع RNAI (COO) به تلگرام شما ارسال شد ✅"
-          : `گزارش در پنل ثبت شد (${d?.telegram?.error || "تلگرام نیاز به بررسی دارد"})`
-      );
+      const d = await api("/api/reports", "POST", { action: kind });
+      const cooSent = Boolean(d?.coo?.telegramSent);
+      const dailySent = Number(d?.dailyReports?.sent || 0);
+      const parts: string[] = [];
+      if (kind !== "daily_reports") {
+        parts.push(cooSent ? "گزارش جامع RNAI (COO) ارسال شد ✅" : `گزارش COO ارسال نشد (${d?.coo?.telegramError || "نامشخص"})`);
+      }
+      if (kind !== "coo") {
+        parts.push(
+          dailySent > 0
+            ? `گزارش ${fa(dailySent)} کارمند ارسال شد ✅`
+            : `گزارشی برای کارمندان ارسال نشد (${d?.dailyReports?.errors?.[0] || d?.dailyReports?.skipped || "نامشخص"})`,
+        );
+      }
+      notify(parts.join(" • "));
+      await load();
+    } catch (err: any) {
+      notify(`⚠️ ${err.message}`);
+    } finally {
+      setBusy("");
+    }
+  }
+
+  /** تغییر حالت گزارش دوره‌ای: manual (توقف) یا auto (روشن). */
+  async function changeReportMode(mode: "manual" | "auto") {
+    setBusy("report-mode");
+    try {
+      const d = await api("/api/reports", "POST", { mode });
+      setReportState((prev: any) => ({ ...(prev || {}), ...d }));
+      notify(d.message || (mode === "manual" ? "گزارش دوره‌ای متوقف شد ✅" : "گزارش دوره‌ای روشن شد"));
       await load();
     } catch (err: any) {
       notify(`⚠️ ${err.message}`);
@@ -672,12 +706,33 @@ export default function Control() {
                   قیمت بازار در دسترس نیست
                 </span>
               )}
+              <span
+                title={
+                  reportState?.mode === "auto"
+                    ? "گزارش دوره‌ای روشن است (کرون/چرخه گزارش می‌فرستد)"
+                    : "گزارش دوره‌ای خاموش است؛ فقط با درخواست شما ارسال می‌شود"
+                }
+                className={`rounded-full border px-3 py-2 text-xs font-bold ${
+                  reportState?.mode === "auto"
+                    ? "border-amber-300 bg-amber-50 text-amber-700"
+                    : "border-emerald-300 bg-emerald-50 text-emerald-700"
+                }`}
+              >
+                {reportState?.mode === "auto" ? "🔔 گزارش دوره‌ای: روشن" : "🔕 گزارش دوره‌ای: خاموش (دستی)"}
+              </span>
               <button
-                onClick={sendTelegramReport}
-                disabled={busy === "tg"}
+                onClick={() => sendTelegramReport("coo")}
+                disabled={busy.startsWith("tg-")}
                 className="rounded-full bg-[#229ED9] px-3 py-2 text-xs font-bold text-white disabled:opacity-50"
               >
-                {busy === "tg" ? "⏳" : "📤"} گزارش روزانه به تلگرام
+                {busy === "tg-coo" ? "⏳" : "📨"} گزارش جامع به تلگرام (الان)
+              </button>
+              <button
+                onClick={() => sendTelegramReport("daily_reports")}
+                disabled={busy.startsWith("tg-")}
+                className="rounded-full border border-[#229ED9] bg-white px-3 py-2 text-xs font-bold text-[#229ED9] disabled:opacity-50"
+              >
+                {busy === "tg-daily_reports" ? "⏳" : "📤"} گزارش کارمندان (الان)
               </button>
             </div>
           </header>
@@ -1767,6 +1822,45 @@ export default function Control() {
                       className="rounded-xl bg-[#229ED9] px-3.5 py-2 text-xs font-bold text-white disabled:opacity-50"
                     >
                       {busy === "coo-executive_report" ? "⏳ ارسال…" : "📨 ارسال این گزارش به تلگرام"}
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* کنترل گزارش تلگرام — توقف کاملِ ارسال دوره‌ای */}
+              <div className="rounded-3xl border bg-white p-5">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <h3 className="text-sm font-black">
+                      🔕 گزارش تلگرام: {reportState?.mode === "auto" ? "دوره‌ای روشن" : "فقط دستی"}
+                    </h3>
+                    <p className="mt-1 max-w-2xl text-[11px] leading-6 text-slate-500">
+                      در حالت «فقط دستی» هیچ گزارش خودکاری — نه از کرون، نه از چرخهٔ ۳۰دقیقه‌ای ناوگان — به
+                      تلگرام نمی‌رود. هر وقت گزارش خواستید، دکمه‌های «الان» را بزنید یا در ربات{" "}
+                      <code className="rounded bg-slate-100 px-1">/reports now</code> بفرستید.
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      onClick={() => changeReportMode("manual")}
+                      disabled={busy === "report-mode" || reportState?.mode === "manual"}
+                      className="rounded-xl bg-emerald-600 px-3.5 py-2 text-xs font-black text-white disabled:opacity-40"
+                    >
+                      {busy === "report-mode" ? "⏳" : "🔕"} توقف گزارش دوره‌ای
+                    </button>
+                    <button
+                      onClick={() => changeReportMode("auto")}
+                      disabled={busy === "report-mode" || reportState?.mode === "auto"}
+                      className="rounded-xl border border-slate-300 bg-white px-3.5 py-2 text-xs font-bold text-slate-700 disabled:opacity-40"
+                    >
+                      🔔 روشن کردن گزارش دوره‌ای
+                    </button>
+                    <button
+                      onClick={() => sendTelegramReport("all")}
+                      disabled={busy.startsWith("tg-")}
+                      className="rounded-xl bg-[#229ED9] px-3.5 py-2 text-xs font-bold text-white disabled:opacity-50"
+                    >
+                      {busy === "tg-all" ? "⏳" : "📨"} گرفتن گزارش کامل همین حالا
                     </button>
                   </div>
                 </div>

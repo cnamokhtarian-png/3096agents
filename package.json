@@ -10,7 +10,9 @@
     "verify:config": "node --experimental-strip-types scripts/verify-config.ts",
     "verify:admin": "node --experimental-strip-types scripts/verify-admin-password.ts",
     "fleet:local": "node scripts/fleet-loop.mjs",
-    "verify:trade": "node scripts/verify-trade-cycle.mjs"
+    "verify:trade": "node scripts/verify-trade-cycle.mjs",
+    "reports:mode": "node scripts/reports-mode.mjs",
+    "verify:reports": "node --experimental-strip-types scripts/verify-report-gate.ts"
   },
   "dependencies": {
     "dotenv": "17.3.1",

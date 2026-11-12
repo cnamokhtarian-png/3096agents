@@ -146,12 +146,18 @@ Telegram (دکمه تأیید) ──► /api/telegram/webhook ──► approve
 > `NEXT_PUBLIC_SUPABASE_URL` و `SUPABASE_SERVICE_ROLE_KEY` اختیاری‌اند؛ این پروژه مستقیم با Postgres کار می‌کند و برای امنیت، تنها یک مسیر دسترسی (Pooler + رول محدود) دارد.
 
 ### گام ۳ — Cron
-`vercel.json` دو کرون دارد (سازگار با پلن Hobby = یک‌بار در روز):
+`vercel.json` فقط یک کرون «ضربان پشتیبان» دارد (سازگار با پلن Hobby = یک‌بار در روز):
 
 ```json
-{ "path": "/api/cron/tick?job=full",    "schedule": "0 6 * * *" },
-{ "path": "/api/cron/tick?job=reports", "schedule": "30 6 * * *" }
+{ "path": "/api/cron/tick?job=full", "schedule": "0 6 * * *" }
 ```
+
+> 🔕 **گزارش دوره‌ای به‌صورت پیش‌فرض خاموش است.** کرون `job=reports` از
+> `vercel.json` حذف شده و چرخهٔ ناوگان هم دیگر خلاصهٔ خودکار به تلگرام
+> نمی‌فرستد. حالت پیش‌فرض «فقط دستی» است: هر وقت خودتان خواستید گزارش
+> بگیرید (پنل → 🧾 گزارش کارمندان، یا دستور `/reports now` در ربات).
+> برای برگرداندن ارسال خودکار، یا کرون `reports` را دوباره در `vercel.json`
+> اضافه کنید و یا در پنل/ربات حالت را «روشن» کنید (جزئیات: بخش ۵).
 
 اگر پلن Pro دارید و اسکن هر ۱۰ دقیقه می‌خواهید، `schedule` را به `*/10 * * * *` تغییر دهید. جایگزین روی Hobby: یک سرویس Ping (مثل cron-job.org) با آدرس
 `/api/cron/tick?job=full&secret=CRON_SECRET` و متد GET.
@@ -219,8 +225,9 @@ curl -X POST "https://YOUR-APP.vercel.app/api/telegram/setup" \
 | `/api/jobs` PATCH `{action:"approve"}` | | اجرای واقعی (سفارش صرافی یا تأیید واریز) |
 | `/api/telegram/webhook` | POST | وبهوک واقعی (ضدتکرار + سکرت) |
 | `/api/telegram/setup` | GET/POST | وضعیت و ثبت/حذف وبهوک |
-| `/api/telegram/send` | POST | پیام واقعی / گزارش روزانه همه کارمندان |
-| `/api/cron/tick` | GET/POST | کرون واقعی (`market`,`queue`,`approvals`,`expire`,`reports`,`cleanup`) |
+| `/api/reports` | GET/POST | وضعیت/تغییر حالت گزارش دوره‌ای و **گرفتن گزارش دستی در لحظه** |
+| `/api/telegram/send` | POST | پیام واقعی / گزارش درخواستی همه کارمندان |
+| `/api/cron/tick` | GET/POST | کرون واقعی (`market`,`queue`,`approvals`,`expire`,`reports`,`cleanup`) — `reports` فقط در حالت «خودکار» ارسال می‌کند |
 | `/api/market` | GET/POST | قیمت واقعی و ذخیره اسنپ‌شات |
 | `/api/system/status` | GET | چک‌لیست env، دیتابیس، صرافی، تلگرام، کرون، خطاها |
 | `/api/health` | GET | سلامت دیتابیس + وجود جدول‌ها |
@@ -244,6 +251,65 @@ curl -X POST https://YOUR-APP.vercel.app/api/agents/ingest \
 - `pending_verification` → درآمد ثبت نشد، Job تأیید ساخته و به تلگرام ارسال شد؛
 - `duplicate: true` → همین هش قبلاً ثبت شده (ضد درآمد تکراری).
 - `422` → بدون `txHash` هیچ درآمدی پذیرفته نمی‌شود.
+
+---
+
+## ۴.۵) گزارش تلگرام — «فقط دستی» (پیش‌فرض)
+
+هر گزارش به تلگرام فقط با درخواست خودِ مدیرعامل ارسال می‌شود. هیچ کرون یا
+چرخهٔ زمان‌بندی‌شده‌ای گزارش دوره‌ای نمی‌فرستد.
+
+**چطور گزارش بگیرم؟** هر کدام از این سه راه:
+
+| راه | دستور |
+| --- | --- |
+| پنل → 🧾 گزارش کارمندان | دکمهٔ «📨 گرفتن گزارش کامل همین حالا» |
+| پنل → نوار بالای صفحه | «📨 گزارش جامع به تلگرام (الان)» یا «📤 گزارش کارمندان (الان)» |
+| ربات تلگرام | `/reports now` (گزارش جامع) یا `/report` (تک‌تک کارمندان) |
+
+**مشاهده و تغییر حالت** (فقط اگر روزی خواستید دوباره خودکار شود):
+
+```bash
+# وضعیت فعلی
+curl https://YOUR-APP.vercel.app/api/reports -b "session=..."
+
+# توقف کامل گزارش دوره‌ای (حالت دستی — پیش‌فرض)
+curl -X POST https://YOUR-APP.vercel.app/api/reports \
+  -H "Content-Type: application/json" -b "session=..." \
+  -d '{"mode":"manual"}'
+
+# گرفتن گزارش در لحظه (مستقل از حالت، همیشه مجاز)
+curl -X POST https://YOUR-APP.vercel.app/api/reports \
+  -H "Content-Type: application/json" -b "session=..." \
+  -d '{"action":"all"}'
+
+# روشن کردن دوبارهٔ گزارش دوره‌ای (اختیاری)
+curl -X POST https://YOUR-APP.vercel.app/api/reports \
+  -H "Content-Type: application/json" -b "session=..." \
+  -d '{"mode":"auto"}'
+```
+
+در ربات هم `/reports off`، `/reports on` و `/reports now` کار می‌کنند.
+
+از خط فرمان (بدون باز کردن پنل):
+
+```bash
+npm run reports:mode            # وضعیت فعلی
+npm run reports:mode manual     # توقف گزارش دوره‌ای
+npm run reports:mode auto       # روشن کردن دوباره
+```
+
+**نکته‌های مهم:**
+
+- حالت در جدول `settings` با کلید `periodic_reports_enabled` ذخیره می‌شود
+  (`false` = دستی، `true` = خودکار). نبودِ رکورد یعنی **دستی**.
+- ارسال `job=reports` به کرون در حالت دستی کاری انجام نمی‌دهد و فقط
+  `{skipped:"manual_mode"}` برمی‌گرداند.
+- پیام‌های **عملیاتی** (کارت تأیید معامله، هشدار نتیجهٔ نامشخص سفارش، گزارش
+  بسته‌شدن پوزیشن) جزو «گزارش دوره‌ای» نیستند و مثل قبل ارسال می‌شوند؛ فقط
+  گزارش‌های وضعیت/خلاصهٔ خودکار قطع شده‌اند.
+- اجرای دستی از GitHub Actions (تب Actions → Fleet Loop → Run workflow) هم
+  همان مسیر کرون است و در حالت دستی گزارش نمی‌فرستد.
 
 ---
 

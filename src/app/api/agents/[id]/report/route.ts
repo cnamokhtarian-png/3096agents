@@ -41,6 +41,9 @@ export async function POST(
       if (!report.ok)
         return NextResponse.json({ error: report.error }, { status: 500 });
 
+      // این مسیر همیشه یک درخواست دستیِ مدیرعامل است؛ پس مستقل از حالت
+      // «دستی/خودکار» ارسال می‌شود. اگر گزارش روزانهٔ خودکار فعال نباشد،
+      // همین درخواست تک‌کارمند تنها راه گرفتن گزارش از تلگرام است.
       let telegram: Record<string, unknown> = {
         sent: false,
         reason: "not_requested",

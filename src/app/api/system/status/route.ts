@@ -16,6 +16,7 @@ import { ensureSeed } from "@/lib/seed";
 import { conf } from "@/lib/config";
 import { safeRoute } from "@/lib/api-response";
 import { geminiModelPlan } from "@/lib/ai";
+import { reportMode } from "@/lib/report-schedule";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -36,6 +37,7 @@ export async function GET(req: NextRequest) {
       const test = url.searchParams.get("test") === "1";
       const isAdmin = Boolean(currentUser(req));
       const audit = auditEnv();
+      const reportGateMode = await reportMode();
 
       const dbCheck: Record<string, unknown> = { ok: false };
       try {
@@ -145,7 +147,13 @@ export async function GET(req: NextRequest) {
           last: lastCron[0] ?? null,
           recent: crons,
           secretConfigured: Boolean(conf("CRON_SECRET")),
-          schedule: "*/10 * * * * (market/queue) + روزانه reports",
+          schedule: "روزانه job=full (ضربان پشتیبان) — گزارش دوره‌ای خاموش است",
+          reports: {
+            mode: reportGateMode,
+            periodicEnabled: reportGateMode === "auto",
+            note:
+              "حالت پیش‌فرض «دستی» است: گزارش فقط با درخواست مدیرعامل (پنل یا /reports now) ارسال می‌شود.",
+          },
         },
         queue: {
           pendingApprovals: Number(pendingApprovals[0]?.n || 0),

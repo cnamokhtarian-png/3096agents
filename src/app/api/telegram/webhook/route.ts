@@ -35,6 +35,11 @@ import {
   generateCooExecutiveReport,
   runFleetCycle,
 } from "@/lib/coo";
+import {
+  normalizeReportMode,
+  reportModeLabel,
+} from "@/lib/report-schedule-core";
+import { reportMode, setReportMode } from "@/lib/report-schedule";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -106,11 +111,13 @@ async function handleAdminCommand(text: string, chatId: string | number) {
         "• /startup — ابلاغ مجدد شرح وظایف و استارت‌آپ کل ناوگان",
         "• /status — وضعیت خلاصه ناوگان",
         "• /jobs — کارت‌های پیشنهاد منتظر تأیید [✅]/[❌]",
-        "• /report — گزارش تکی کارمندان",
+        "• /report — گزارش تک‌تک کارمندان (فقط با درخواست شما)",
+        "• /reports — وضعیت گزارش دوره‌ای؛ روشن/خاموش کردن آن",
         "• /id — نمایش چت‌آیدی شما",
         "• /webhook — وضعیت وبهوک تلگرام",
         "",
         "🔒 <i>پروتکل HITL فعال: هیچ تراکنشی بدون دکمه [✅] شما نهایی نمی‌شود.</i>",
+        "🔕 <i>گزارش دوره‌ای خاموش است؛ گزارش فقط وقتی می‌آید که خودتان بخواهید.</i>",
       ].join("\n"),
     );
     return true;
@@ -202,6 +209,7 @@ async function handleAdminCommand(text: string, chatId: string | number) {
     return true;
   }
 
+  // گزارش درخواستی مدیرعامل: همیشه ارسال می‌شود، مستقل از حالت «دستی/خودکار».
   if (cmd === "/report") {
     const list = await db.select().from(agents);
     await sendTelegramMessage(
@@ -217,6 +225,79 @@ async function handleAdminCommand(text: string, chatId: string | number) {
         `<b>${escapeHtml(lines[0])}</b>\n${escapeHtml(lines.slice(1).join("\n"))}`,
       );
     }
+    return true;
+  }
+
+  // مدیریت گزارش دوره‌ای از داخل خود ربات:
+  //   /reports          → وضعیت فعلی
+  //   /reports off      → توقف کامل گزارش خودکار (حالت دستی)
+  //   /reports on       → روشن کردن گزارش دوره‌ای
+  //   /reports now      → گرفتن گزارش جامع همین حالا (دستی)
+  if (cmd === "/reports" || cmd === "/schedule") {
+    const arg = text.trim().split(/\s+/).slice(1).join(" ").toLowerCase();
+    if (!arg) {
+      const mode = await reportMode();
+      await sendTelegramMessage(
+        chatId,
+        [
+          `<b>🔕 وضعیت گزارش دوره‌ای: ${reportModeLabel(mode)}</b>`,
+          mode === "manual"
+            ? "هیچ گزارش خودکاری ارسال نمی‌شود؛ فقط با درخواست شما گزارش می‌آید."
+            : "گزارش خودکار روشن است و چرخهٔ ناوگان/کرون گزارش می‌فرستد.",
+          "",
+          "برای تغییر:",
+          "• <code>/reports off</code> — توقف گزارش خودکار",
+          "• <code>/reports on</code> — روشن کردن گزارش خودکار",
+          "• <code>/reports now</code> — گرفتن گزارش جامع همین حالا",
+        ].join("\n"),
+      );
+      return true;
+    }
+
+    if (arg === "off" || arg === "stop" || arg === "خاموش") {
+      const saved = await setReportMode("manual", `telegram:${chatId}`);
+      await sendTelegramMessage(
+        chatId,
+        `✅ گزارش دوره‌ای <b>متوقف</b> شد (حالت: ${reportModeLabel(saved)}).` +
+          "\nاز این به بعد فقط وقتی خودتان /reports now یا /report بزنید گزارش می‌گیرید.",
+      );
+      return true;
+    }
+
+    if (arg === "on" || arg === "start" || arg === "روشن") {
+      const saved = await setReportMode("auto", `telegram:${chatId}`);
+      await sendTelegramMessage(
+        chatId,
+        `⚠️ گزارش دوره‌ای <b>روشن</b> شد (حالت: ${reportModeLabel(saved)}).` +
+          "\nچرخهٔ ناوگان و کرون دوباره گزارش خودکار می‌فرستند. برای توقف: /reports off",
+      );
+      return true;
+    }
+
+    if (arg === "now" || arg === "گزارش" || arg === "الان") {
+      await sendTelegramMessage(chatId, "⏳ در حال ساخت گزارش جامع از دادهٔ واقعی...");
+      const res = await generateCooExecutiveReport({
+        sendTelegram: false,
+        periodic: false,
+      });
+      await sendTelegramMessage(chatId, res.summary.telegramHtml);
+      return true;
+    }
+
+    const mode = normalizeReportMode(arg);
+    if (mode) {
+      await setReportMode(mode, `telegram:${chatId}`);
+      await sendTelegramMessage(
+        chatId,
+        `✅ حالت گزارش روی «${reportModeLabel(mode)}» تنظیم شد.`,
+      );
+      return true;
+    }
+
+    await sendTelegramMessage(
+      chatId,
+      "پارامتر نامعتبر است. نمونه: /reports off | on | now",
+    );
     return true;
   }
 
